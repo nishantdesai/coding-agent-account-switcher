@@ -1,0 +1,31 @@
+# macOS
+.DS_Store
+
+# Go build artifacts
+/ags
+bin/
+dist/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+coverage.out
+
+# Editor/IDE
+.idea/
+.vscode/
+
+# Local environment files
+.env
+.env.*
+*.local
+
+# AGS local data/secrets (if users choose project-local roots)
+.config/ags/
+ags-data/
+snapshots/
+state.json
+
