@@ -54,18 +54,23 @@ func TestInspectCodexBranches(t *testing.T) {
 		t.Fatalf("missing access token branch not hit: %+v", got)
 	}
 
-	if got := inspectCodex([]byte(`{"tokens":{"access_token":"bad"}}`)); len(got.Details) == 0 || got.Details[0] != "could not parse JWT exp from access_token" {
-		t.Fatalf("bad jwt branch not hit: %+v", got)
+	got := inspectCodex([]byte(`{"tokens":{"access_token":"bad"}}`))
+	joined := strings.Join(got.Details, " ")
+	if !strings.Contains(joined, "format=opaque") || !strings.Contains(joined, "could not parse JWT exp") {
+		t.Fatalf("bad token branch not hit: %+v", got)
 	}
 
 	future := time.Now().UTC().Add(1 * time.Hour).Unix()
 	validRaw := `{"last_refresh":"2026-01-01T00:00:00Z","tokens":{"access_token":"` + jwtWithExp(t, future) + `"}}`
-	got := inspectCodex([]byte(validRaw))
+	got = inspectCodex([]byte(validRaw))
 	if got.Status != "valid" || got.NeedsRefresh != "no" || got.ExpiresAt == "" {
 		t.Fatalf("valid branch failed: %+v", got)
 	}
 	if got.LastRefresh != "2026-01-01T00:00:00Z" {
 		t.Fatalf("expected last refresh from payload, got %+v", got)
+	}
+	if !strings.Contains(strings.Join(got.Details, " "), "access_token format=jwt") {
+		t.Fatalf("expected jwt detail line, got %+v", got.Details)
 	}
 
 	expSoon := time.Now().UTC().Add(5 * time.Minute).Unix()
@@ -78,6 +83,14 @@ func TestInspectCodexBranches(t *testing.T) {
 	got = inspectCodex([]byte(`{"tokens":{"access_token":"` + jwtWithExp(t, expired) + `"}}`))
 	if got.Status != "expired" || got.NeedsRefresh != "yes" {
 		t.Fatalf("expired branch failed: %+v", got)
+	}
+
+	jwtNoExpHeader := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"none"}`))
+	jwtNoExpClaims := base64.RawURLEncoding.EncodeToString([]byte(`{"sub":"u1"}`))
+	jwtNoExp := jwtNoExpHeader + "." + jwtNoExpClaims + ".sig"
+	got = inspectCodex([]byte(`{"tokens":{"access_token":"` + jwtNoExp + `"}}`))
+	if !strings.Contains(strings.Join(got.Details, " "), "format=jwt") || !strings.Contains(strings.Join(got.Details, " "), "could not parse JWT exp") {
+		t.Fatalf("expected jwt-without-exp detail branch, got %+v", got)
 	}
 }
 
@@ -92,7 +105,6 @@ func TestInspectPiBranches(t *testing.T) {
 
 	validMillis := time.Now().UTC().Add(2 * time.Hour).UnixMilli()
 	expiredMillis := time.Now().UTC().Add(-2 * time.Hour).UnixMilli()
-	// Put valid first, expired second to execute the worst-status update branch.
 	raw := `{"claude":{"expires":` + strconv.FormatInt(validMillis, 10) + `},"codex":{"expires":` + strconv.FormatInt(expiredMillis, 10) + `}}`
 	got := inspectPi([]byte(raw))
 	if got.Status != "expired" || got.NeedsRefresh != "yes" {
@@ -104,6 +116,20 @@ func TestInspectPiBranches(t *testing.T) {
 	joined := strings.Join(got.Details, " ")
 	if !strings.Contains(joined, "codex=expired") || !strings.Contains(joined, "claude=valid") {
 		t.Fatalf("unexpected details: %+v", got.Details)
+	}
+}
+
+func TestInspectPiTokenDetails(t *testing.T) {
+	expMillis := time.Now().UTC().Add(time.Hour).UnixMilli()
+	jwt := jwtWithExp(t, time.Now().UTC().Add(time.Hour).Unix())
+	raw := `{"openai-codex":{"access":"` + jwt + `","expires":` + strconv.FormatInt(expMillis, 10) + `},"anthropic":{"access":"opaque-token","expires":` + strconv.FormatInt(expMillis, 10) + `}}`
+	got := inspectPi([]byte(raw))
+	joined := strings.Join(got.Details, " ")
+	if !strings.Contains(joined, "openai-codex.access format=jwt") {
+		t.Fatalf("expected jwt provider token detail, got %+v", got.Details)
+	}
+	if !strings.Contains(joined, "anthropic.access format=opaque") {
+		t.Fatalf("expected opaque provider token detail, got %+v", got.Details)
 	}
 }
 
@@ -146,9 +172,9 @@ func TestExtractJWTExpiryBranches(t *testing.T) {
 		t.Fatalf("expected bad exp branch")
 	}
 
-	// Segment length divisible by 4 executes padding==0 path.
 	claimsPadded := base64.URLEncoding.EncodeToString([]byte(`{"exp":123456}`))
-	if got, ok := extractJWTExpiry("a." + claimsPadded + ".c"); !ok || got.Unix() != 123456 {
+	headerPadded := base64.URLEncoding.EncodeToString([]byte(`{"alg":"none"}`))
+	if got, ok := extractJWTExpiry(headerPadded + "." + claimsPadded + ".c"); !ok || got.Unix() != 123456 {
 		t.Fatalf("expected valid parse on already padded payload")
 	}
 
@@ -157,6 +183,61 @@ func TestExtractJWTExpiryBranches(t *testing.T) {
 	got, ok := extractJWTExpiry(tok)
 	if !ok || got.Unix() != exp {
 		t.Fatalf("expected valid exp parse, got %v, ok=%v", got, ok)
+	}
+}
+
+func TestInspectAccessTokenHelpers(t *testing.T) {
+	jwtToken := jwtWithExp(t, 123)
+	info := inspectAccessToken(jwtToken)
+	if !info.IsJWT || !info.HasExp || info.ExpiresAt.Unix() != 123 {
+		t.Fatalf("expected jwt with exp insight, got %+v", info)
+	}
+	if len(info.ClaimKeys) == 0 || info.ClaimKeys[0] != "exp" {
+		t.Fatalf("expected claim key extraction, got %+v", info.ClaimKeys)
+	}
+
+	if got := describeJWTToken("access_token", info); !strings.Contains(got, "format=jwt") || !strings.Contains(got, "claims=exp") {
+		t.Fatalf("unexpected describeJWTToken output: %q", got)
+	}
+
+	headerNoAlg := base64.RawURLEncoding.EncodeToString([]byte(`{"typ":"JWT"}`))
+	claims := base64.RawURLEncoding.EncodeToString([]byte(`{"sub":"u1"}`))
+	info = inspectAccessToken(headerNoAlg + "." + claims + ".sig")
+	if !info.IsJWT || info.HasExp {
+		t.Fatalf("expected jwt without exp, got %+v", info)
+	}
+	if got := describeJWTToken("access_token", info); strings.Contains(got, "alg=") {
+		t.Fatalf("did not expect alg in description: %q", got)
+	}
+
+	if info := inspectAccessToken("opaque-token"); info.IsJWT {
+		t.Fatalf("expected non-jwt token")
+	}
+
+	if info := inspectAccessToken("*.e30.sig"); info.IsJWT {
+		t.Fatalf("expected header decode failure path")
+	}
+	if info := inspectAccessToken(base64.RawURLEncoding.EncodeToString([]byte("not-json")) + ".e30.sig"); info.IsJWT {
+		t.Fatalf("expected header json failure path")
+	}
+	validHeader := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"none"}`))
+	if info := inspectAccessToken(validHeader + ".*.sig"); info.IsJWT {
+		t.Fatalf("expected claims decode failure path")
+	}
+	if info := inspectAccessToken(validHeader + "." + base64.RawURLEncoding.EncodeToString([]byte("not-json")) + ".sig"); info.IsJWT {
+		t.Fatalf("expected claims json failure path")
+	}
+	emptyClaims := base64.RawURLEncoding.EncodeToString([]byte(`{}`))
+	if info := inspectAccessToken(validHeader + "." + emptyClaims + ".sig"); !info.IsJWT || len(info.ClaimKeys) != 0 {
+		t.Fatalf("expected jwt with empty claim set, got %+v", info)
+	}
+
+	seg := base64.RawURLEncoding.EncodeToString([]byte(`{"x":1}`))
+	if _, err := decodeJWTSegment(seg); err != nil {
+		t.Fatalf("expected decode success with raw-url segment: %v", err)
+	}
+	if _, err := decodeJWTSegment("*"); err == nil {
+		t.Fatalf("expected decode failure for invalid segment")
 	}
 }
 

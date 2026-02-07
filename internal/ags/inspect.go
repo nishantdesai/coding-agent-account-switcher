@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 )
@@ -56,14 +57,20 @@ func inspectCodex(raw []byte) AuthInsight {
 		return insight
 	}
 
-	expiry, ok := extractJWTExpiry(accessToken)
-	if !ok {
+	tokenInfo := inspectAccessToken(accessToken)
+	if tokenInfo.IsJWT {
+		insight.Details = append(insight.Details, describeJWTToken("access_token", tokenInfo))
+	} else {
+		insight.Details = append(insight.Details, "access_token format=opaque (not JWT)")
+	}
+
+	if !tokenInfo.HasExp {
 		insight.Details = append(insight.Details, "could not parse JWT exp from access_token")
 		return insight
 	}
 
-	insight.ExpiresAt = expiry.Format(time.RFC3339)
-	status := classifyExpiry(expiry)
+	insight.ExpiresAt = tokenInfo.ExpiresAt.Format(time.RFC3339)
+	status := classifyExpiry(tokenInfo.ExpiresAt)
 	insight.Status = status
 	insight.NeedsRefresh = needsRefreshFromStatus(status)
 	return insight
@@ -85,12 +92,23 @@ func inspectPi(raw []byte) AuthInsight {
 		expiresAt time.Time
 	}
 	statuses := []providerStatus{}
+	tokenDetails := []string{}
 
 	for key, value := range payload {
 		entry, ok := value.(map[string]any)
 		if !ok {
 			continue
 		}
+
+		if accessToken, ok := entry["access"].(string); ok && strings.TrimSpace(accessToken) != "" {
+			tokenInfo := inspectAccessToken(accessToken)
+			if tokenInfo.IsJWT {
+				tokenDetails = append(tokenDetails, describeJWTToken(key+".access", tokenInfo))
+			} else {
+				tokenDetails = append(tokenDetails, fmt.Sprintf("%s.access format=opaque (not JWT)", key))
+			}
+		}
+
 		expRaw, ok := entry["expires"]
 		if !ok {
 			continue
@@ -107,25 +125,27 @@ func inspectPi(raw []byte) AuthInsight {
 		})
 	}
 
+	sort.Strings(tokenDetails)
 	if len(statuses) == 0 {
+		details := []string{"no provider expires fields found"}
+		details = append(details, tokenDetails...)
 		return AuthInsight{
 			Status:       "unknown",
 			NeedsRefresh: "unknown",
-			Details:      []string{"no provider expires fields found"},
+			Details:      details,
 		}
 	}
 
+	sort.Slice(statuses, func(i, j int) bool {
+		return statusRank(statuses[i].status) > statusRank(statuses[j].status)
+	})
 	worst := statuses[0]
-	for _, s := range statuses[1:] {
-		if statusRank(s.status) > statusRank(worst.status) {
-			worst = s
-		}
-	}
 
-	details := make([]string, 0, len(statuses))
+	details := make([]string, 0, len(statuses)+len(tokenDetails))
 	for _, s := range statuses {
 		details = append(details, fmt.Sprintf("%s=%s (%s)", s.name, s.status, s.expiresAt.Format(time.RFC3339)))
 	}
+	details = append(details, tokenDetails...)
 
 	return AuthInsight{
 		Status:       worst.status,
@@ -161,35 +181,84 @@ func inspectClaude(raw []byte) AuthInsight {
 	}
 }
 
-func extractJWTExpiry(token string) (time.Time, bool) {
+type accessTokenInsight struct {
+	IsJWT     bool
+	HeaderAlg string
+	ClaimKeys []string
+	HasExp    bool
+	ExpiresAt time.Time
+}
+
+func inspectAccessToken(token string) accessTokenInsight {
 	parts := strings.Split(token, ".")
-	if len(parts) < 2 {
-		return time.Time{}, false
-	}
-	payloadSegment := parts[1]
-	padding := len(payloadSegment) % 4
-	if padding > 0 {
-		payloadSegment += strings.Repeat("=", 4-padding)
+	if len(parts) != 3 {
+		return accessTokenInsight{}
 	}
 
-	raw, err := base64.URLEncoding.DecodeString(payloadSegment)
+	headerRaw, err := decodeJWTSegment(parts[0])
 	if err != nil {
-		return time.Time{}, false
+		return accessTokenInsight{}
+	}
+	claimsRaw, err := decodeJWTSegment(parts[1])
+	if err != nil {
+		return accessTokenInsight{}
+	}
+
+	var header map[string]any
+	if err := json.Unmarshal(headerRaw, &header); err != nil {
+		return accessTokenInsight{}
 	}
 	var claims map[string]any
-	if err := json.Unmarshal(raw, &claims); err != nil {
-		return time.Time{}, false
+	if err := json.Unmarshal(claimsRaw, &claims); err != nil {
+		return accessTokenInsight{}
 	}
 
-	expRaw, ok := claims["exp"]
-	if !ok {
+	info := accessTokenInsight{IsJWT: true}
+	if alg, ok := header["alg"].(string); ok && strings.TrimSpace(alg) != "" {
+		info.HeaderAlg = alg
+	}
+	if len(claims) > 0 {
+		info.ClaimKeys = make([]string, 0, len(claims))
+		for key := range claims {
+			info.ClaimKeys = append(info.ClaimKeys, key)
+		}
+		sort.Strings(info.ClaimKeys)
+	}
+
+	if expRaw, ok := claims["exp"]; ok {
+		if exp, ok := numberToFloat(expRaw); ok {
+			info.HasExp = true
+			info.ExpiresAt = time.Unix(int64(exp), 0).UTC()
+		}
+	}
+	return info
+}
+
+func describeJWTToken(tokenName string, info accessTokenInsight) string {
+	claims := "-"
+	if len(info.ClaimKeys) > 0 {
+		claims = strings.Join(info.ClaimKeys, ",")
+	}
+	if info.HeaderAlg == "" {
+		return fmt.Sprintf("%s format=jwt claims=%s", tokenName, claims)
+	}
+	return fmt.Sprintf("%s format=jwt alg=%s claims=%s", tokenName, info.HeaderAlg, claims)
+}
+
+func extractJWTExpiry(token string) (time.Time, bool) {
+	info := inspectAccessToken(token)
+	if !info.HasExp {
 		return time.Time{}, false
 	}
-	exp, ok := numberToFloat(expRaw)
-	if !ok {
-		return time.Time{}, false
+	return info.ExpiresAt, true
+}
+
+func decodeJWTSegment(segment string) ([]byte, error) {
+	padding := len(segment) % 4
+	if padding > 0 {
+		segment += strings.Repeat("=", 4-padding)
 	}
-	return time.Unix(int64(exp), 0).UTC(), true
+	return base64.URLEncoding.DecodeString(segment)
 }
 
 func numberToFloat(value any) (float64, bool) {
