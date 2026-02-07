@@ -6,8 +6,9 @@ Project memory and contributor guide for `coding-agent-account-switcher`.
 
 - Build this project in Go (not Python/Swift) to balance learning, shipping speed, and binary distribution.
 - Keep v1 intentionally simple:
-  - `ags save <tool> --label <label>`
-  - `ags use <tool> --label <label>`
+  - `ags save <tool> <label>` (also supports `--label`)
+  - `ags use <tool> <label>` (also supports `--label`)
+  - `ags delete <tool> <label>` (also supports `--label`)
   - `ags list [tool] [--verbose]`
 - v1 tools are exactly:
   - `codex`
@@ -57,7 +58,16 @@ Project memory and contributor guide for `coding-agent-account-switcher`.
 - Auth files must be strict JSON (no comments).
 - `.jsonc` files in this repo are sample templates only.
 - Labels are restricted to: `[a-zA-Z0-9._-]+`
-- This environment did not have Go installed at scaffold time, so build/test verification was not run here.
+- Go is installed in this environment and local `go build` plus basic CLI smoke tests have been run.
+
+## Git Commit Policy
+
+- Commit as soon as a coherent, reviewable unit of work is complete.
+- Prefer small commits over large batched commits.
+- Do not mix unrelated changes in one commit.
+- Commit docs/help updates separately when they are independent of code changes.
+- Use clear commit messages that describe user-visible impact.
+- If uncertain whether a change is "reasonable" to commit, default to committing.
 
 ## Security and Privacy Expectations
 
@@ -80,13 +90,16 @@ Project memory and contributor guide for `coding-agent-account-switcher`.
 go build -o ags ./cmd/ags
 
 # Save current auth into labeled snapshots
-./ags save codex --label work
-./ags save claude --label personal
-./ags save pi --label work
+./ags save codex work
+./ags save claude personal
+./ags save pi work
 
 # Switch to a saved snapshot
-./ags use codex --label work
-./ags use pi --label work
+./ags use codex work
+./ags use pi work
+
+# Delete a saved snapshot
+./ags delete codex work
 
 # Inspect inventory and status
 ./ags list
@@ -97,4 +110,3 @@ go build -o ags ./cmd/ags
 
 - Repo name: `coding-agent-account-switcher` (SEO-friendly)
 - CLI binary name: `ags` (short, ergonomic)
-
