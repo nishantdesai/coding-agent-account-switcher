@@ -12,7 +12,10 @@ import (
 	"strings"
 )
 
-var jsonMarshalIndent = json.MarshalIndent
+var (
+	jsonMarshalIndent   = json.MarshalIndent
+	unmarshalPIAuthJSON = json.Unmarshal
+)
 
 func NewManager(rootDir string) (*Manager, error) {
 	rootExpanded, err := expandPath(rootDir)
@@ -121,11 +124,11 @@ func (m *Manager) Use(tool Tool, label string, targetOverride string) (*UseResul
 		return nil, fmt.Errorf("no saved profile for %s label=%q; run `ags save %s --label %s` first", tool, label, tool, label)
 	}
 
-	raw, err := os.ReadFile(entry.SnapshotPath)
+	snapshotRaw, err := os.ReadFile(entry.SnapshotPath)
 	if err != nil {
 		return nil, fmt.Errorf("reading snapshot file: %w", err)
 	}
-	if err := validateJSONObject(raw); err != nil {
+	if err := validateJSONObject(snapshotRaw); err != nil {
 		return nil, fmt.Errorf("snapshot JSON invalid: %w", err)
 	}
 
@@ -138,11 +141,19 @@ func (m *Manager) Use(tool Tool, label string, targetOverride string) (*UseResul
 		return nil, err
 	}
 
-	if err := atomicWriteFile(target, raw, 0o600); err != nil {
+	rawToWrite := snapshotRaw
+	if tool == ToolPi {
+		rawToWrite, err = mergePIAuthWithTarget(snapshotRaw, target)
+		if err != nil {
+			return nil, fmt.Errorf("merging pi auth file: %w", err)
+		}
+	}
+
+	if err := atomicWriteFile(target, rawToWrite, 0o600); err != nil {
 		return nil, fmt.Errorf("writing target auth file: %w", err)
 	}
 
-	hash := sha256Hex(raw)
+	hash := sha256Hex(snapshotRaw)
 	changeSignal := "first use"
 	if entry.LastUsedSHA != "" {
 		if entry.LastUsedSHA == hash {
@@ -164,8 +175,42 @@ func (m *Manager) Use(tool Tool, label string, targetOverride string) (*UseResul
 		Label:              label,
 		TargetPath:         target,
 		ChangeSinceLastUse: changeSignal,
-		Insight:            inspectAuth(tool, raw),
+		Insight:            inspectAuth(tool, rawToWrite),
 	}, nil
+}
+
+func mergePIAuthWithTarget(snapshotRaw []byte, targetPath string) ([]byte, error) {
+	var snapshot map[string]any
+	if err := json.Unmarshal(snapshotRaw, &snapshot); err != nil {
+		return nil, fmt.Errorf("snapshot JSON invalid: %w", err)
+	}
+
+	targetRaw, err := os.ReadFile(targetPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return snapshotRaw, nil
+		}
+		return nil, fmt.Errorf("reading target auth file: %w", err)
+	}
+	if err := validateJSONObject(targetRaw); err != nil {
+		return nil, fmt.Errorf("target auth JSON invalid: %w", err)
+	}
+
+	var target map[string]any
+	if err := unmarshalPIAuthJSON(targetRaw, &target); err != nil {
+		return nil, fmt.Errorf("parsing target auth JSON: %w", err)
+	}
+
+	for provider, auth := range snapshot {
+		target[provider] = auth
+	}
+
+	merged, err := jsonMarshalIndent(target, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("serializing merged pi auth: %w", err)
+	}
+	merged = append(merged, '\n')
+	return merged, nil
 }
 
 func (m *Manager) Delete(tool Tool, label string) (*DeleteResult, error) {

@@ -511,6 +511,7 @@ FLAGS:
 
 BEHAVIOR:
   - Writes the saved snapshot into the tool runtime auth path.
+  - For pi, merges only providers present in the saved snapshot into the existing runtime auth JSON.
   - Prints refresh signal: first use / unchanged / changed since last use.
 
 EXAMPLES:

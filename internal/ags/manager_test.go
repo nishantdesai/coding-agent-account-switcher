@@ -334,9 +334,11 @@ func TestManagerListSkipsUnknownToolAndMissingSnapshotInsight(t *testing.T) {
 
 func restoreManagerSeams() func() {
 	oldJSONMarshalIndent := jsonMarshalIndent
+	oldUnmarshalPIAuthJSON := unmarshalPIAuthJSON
 	oldUserHomeDir := userHomeDir
 	return func() {
 		jsonMarshalIndent = oldJSONMarshalIndent
+		unmarshalPIAuthJSON = oldUnmarshalPIAuthJSON
 		userHomeDir = oldUserHomeDir
 	}
 }
@@ -621,5 +623,153 @@ func TestResolveSourcePathExpandErrorAndSaveStateSerializeError(t *testing.T) {
 	jsonMarshalIndent = func(any, string, string) ([]byte, error) { return nil, os.ErrInvalid }
 	if err := m.saveState(defaultState()); err == nil {
 		t.Fatalf("expected saveState serialization error")
+	}
+}
+
+func TestMergePIAuthWithTarget(t *testing.T) {
+	t.Run("invalid snapshot", func(t *testing.T) {
+		if _, err := mergePIAuthWithTarget([]byte("not-json"), filepath.Join(t.TempDir(), "target.json")); err == nil {
+			t.Fatalf("expected snapshot parse error")
+		}
+	})
+
+	t.Run("target missing", func(t *testing.T) {
+		snapshot := []byte(`{"openai-codex":{"access":"new"}}`)
+		merged, err := mergePIAuthWithTarget(snapshot, filepath.Join(t.TempDir(), "missing.json"))
+		if err != nil {
+			t.Fatalf("target missing merge should succeed: %v", err)
+		}
+		if string(merged) != string(snapshot) {
+			t.Fatalf("expected snapshot passthrough when target missing, got %q", merged)
+		}
+	})
+
+	t.Run("target read error", func(t *testing.T) {
+		targetDir := filepath.Join(t.TempDir(), "target")
+		if err := os.MkdirAll(targetDir, 0o700); err != nil {
+			t.Fatalf("mkdir target dir: %v", err)
+		}
+		if _, err := mergePIAuthWithTarget([]byte(`{"openai-codex":{"access":"new"}}`), targetDir); err == nil {
+			t.Fatalf("expected target read error")
+		}
+	})
+
+	t.Run("target invalid json", func(t *testing.T) {
+		target := filepath.Join(t.TempDir(), "target.json")
+		writeFile(t, target, []byte("not-json"))
+		if _, err := mergePIAuthWithTarget([]byte(`{"openai-codex":{"access":"new"}}`), target); err == nil {
+			t.Fatalf("expected target invalid json error")
+		}
+	})
+
+	t.Run("merge preserves other providers", func(t *testing.T) {
+		target := filepath.Join(t.TempDir(), "target.json")
+		writeFile(t, target, []byte(`{"anthropic":{"access":"anthro-old"},"openai-codex":{"access":"codex-old"}}`))
+		snapshot := []byte(`{"openai-codex":{"access":"codex-new"}}`)
+
+		mergedRaw, err := mergePIAuthWithTarget(snapshot, target)
+		if err != nil {
+			t.Fatalf("mergePIAuthWithTarget: %v", err)
+		}
+
+		var merged map[string]any
+		if err := json.Unmarshal(mergedRaw, &merged); err != nil {
+			t.Fatalf("unmarshal merged json: %v", err)
+		}
+
+		anthropic := merged["anthropic"].(map[string]any)
+		if anthropic["access"] != "anthro-old" {
+			t.Fatalf("expected anthropic preserved, got %+v", anthropic)
+		}
+		openai := merged["openai-codex"].(map[string]any)
+		if openai["access"] != "codex-new" {
+			t.Fatalf("expected openai-codex updated, got %+v", openai)
+		}
+	})
+
+	t.Run("merge serialize error", func(t *testing.T) {
+		restore := restoreManagerSeams()
+		defer restore()
+		jsonMarshalIndent = func(any, string, string) ([]byte, error) { return nil, os.ErrInvalid }
+		target := filepath.Join(t.TempDir(), "target.json")
+		writeFile(t, target, []byte(`{"anthropic":{"access":"anthro-old"}}`))
+		if _, err := mergePIAuthWithTarget([]byte(`{"openai-codex":{"access":"codex-new"}}`), target); err == nil {
+			t.Fatalf("expected merge serialization error")
+		}
+	})
+}
+
+func TestManagerUsePIMergesProviders(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	root := t.TempDir()
+	m, err := NewManager(root)
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+
+	source := filepath.Join(t.TempDir(), "pi-source.json")
+	writeFile(t, source, []byte(`{"openai-codex":{"access":"codex-work","expires":9999999999999}}`))
+	if _, err := m.Save(ToolPi, "work", source); err != nil {
+		t.Fatalf("save pi snapshot: %v", err)
+	}
+
+	target := filepath.Join(t.TempDir(), "pi-target.json")
+	writeFile(t, target, []byte(`{"anthropic":{"access":"anthro-personal","expires":1111},"openai-codex":{"access":"codex-personal","expires":2222}}`))
+
+	if _, err := m.Use(ToolPi, "work", target); err != nil {
+		t.Fatalf("use pi merge: %v", err)
+	}
+
+	raw, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatalf("read merged target: %v", err)
+	}
+	var merged map[string]any
+	if err := json.Unmarshal(raw, &merged); err != nil {
+		t.Fatalf("unmarshal merged target: %v", err)
+	}
+
+	anthropic := merged["anthropic"].(map[string]any)
+	if anthropic["access"] != "anthro-personal" {
+		t.Fatalf("expected anthropic preserved, got %+v", anthropic)
+	}
+	openai := merged["openai-codex"].(map[string]any)
+	if openai["access"] != "codex-work" {
+		t.Fatalf("expected codex provider switched, got %+v", openai)
+	}
+}
+
+func TestMergePIAuthWithTargetTargetParseErrorViaSeam(t *testing.T) {
+	restore := restoreManagerSeams()
+	defer restore()
+	unmarshalPIAuthJSON = func([]byte, any) error { return os.ErrInvalid }
+
+	target := filepath.Join(t.TempDir(), "target.json")
+	writeFile(t, target, []byte(`{"anthropic":{"access":"anthro-old"}}`))
+	if _, err := mergePIAuthWithTarget([]byte(`{"openai-codex":{"access":"codex-new"}}`), target); err == nil {
+		t.Fatalf("expected target parse error from seam")
+	}
+}
+
+func TestManagerUsePiMergeErrorPath(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	root := t.TempDir()
+	m, err := NewManager(root)
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+
+	source := filepath.Join(t.TempDir(), "pi-source.json")
+	writeFile(t, source, []byte(`{"openai-codex":{"access":"codex-work"}}`))
+	if _, err := m.Save(ToolPi, "work", source); err != nil {
+		t.Fatalf("save pi snapshot: %v", err)
+	}
+
+	target := filepath.Join(t.TempDir(), "pi-target.json")
+	writeFile(t, target, []byte("not-json"))
+	if _, err := m.Use(ToolPi, "work", target); err == nil {
+		t.Fatalf("expected pi merge error for invalid target JSON")
 	}
 }

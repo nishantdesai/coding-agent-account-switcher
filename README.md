@@ -20,6 +20,7 @@ Supported tools in v1:
 
 - `save`: copies the current tool auth file into AGS-managed storage under a label.
 - `use`: writes the saved labeled snapshot back into that tool's runtime auth file.
+  - For `pi`, AGS now merges provider keys from the saved snapshot into the existing runtime file, so unrelated providers are preserved.
 - `delete`: removes a saved labeled snapshot and its state metadata for that tool.
 - `list`: shows all saved labels with status, expiry, and refresh-needed signal.
 
