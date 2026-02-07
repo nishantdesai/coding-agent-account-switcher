@@ -12,13 +12,15 @@ import (
 	"strings"
 )
 
+var jsonMarshalIndent = json.MarshalIndent
+
 func NewManager(rootDir string) (*Manager, error) {
 	rootExpanded, err := expandPath(rootDir)
 	if err != nil {
 		return nil, err
 	}
 
-	home, err := os.UserHomeDir()
+	home, err := userHomeDir()
 	if err != nil {
 		return nil, fmt.Errorf("resolving home directory: %w", err)
 	}
@@ -299,7 +301,7 @@ func (m *Manager) loadState() (State, error) {
 }
 
 func (m *Manager) saveState(state State) error {
-	raw, err := json.MarshalIndent(state, "", "  ")
+	raw, err := jsonMarshalIndent(state, "", "  ")
 	if err != nil {
 		return fmt.Errorf("serializing state: %w", err)
 	}
