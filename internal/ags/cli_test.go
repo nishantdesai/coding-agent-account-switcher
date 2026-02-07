@@ -433,10 +433,97 @@ func TestRunVersionAndHelpTopic(t *testing.T) {
 	}
 
 	out.Reset()
+	if err := Run([]string{"help", "active"}, &out, &out); err != nil {
+		t.Fatalf("help active: %v", err)
+	}
+	if !strings.Contains(out.String(), "ags active") {
+		t.Fatalf("unexpected help active output: %q", out.String())
+	}
+
+	out.Reset()
 	if err := Run([]string{"help", "version"}, &out, &out); err != nil {
 		t.Fatalf("help version: %v", err)
 	}
 	if !strings.Contains(out.String(), "ags version") {
 		t.Fatalf("unexpected help version output: %q", out.String())
+	}
+}
+
+func TestRunActive(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	root := t.TempDir()
+	piSrc := filepath.Join(t.TempDir(), "pi.json")
+	writeFile(t, piSrc, []byte(`{"openai-codex":{"access":"codex-work"}}`))
+
+	var out bytes.Buffer
+	if err := Run([]string{"active", "--help"}, &out, &out); err != nil {
+		t.Fatalf("active --help: %v", err)
+	}
+	if !strings.Contains(out.String(), "ags active") {
+		t.Fatalf("expected active usage output, got %q", out.String())
+	}
+
+	out.Reset()
+	if err := Run([]string{"save", "pi", "work", "--source", piSrc, "--root", root}, &out, &out); err != nil {
+		t.Fatalf("save pi for active: %v", err)
+	}
+
+	out.Reset()
+	if err := Run([]string{"active", "--root", root}, &out, &out); err != nil {
+		t.Fatalf("active all: %v", err)
+	}
+	if !strings.Contains(out.String(), "tool\tactive label\tstatus\truntime") {
+		t.Fatalf("unexpected active output header: %q", out.String())
+	}
+
+	out.Reset()
+	if err := Run([]string{"active", "pi", "--verbose", "--root", root}, &out, &out); err != nil {
+		t.Fatalf("active filtered: %v", err)
+	}
+	if !strings.Contains(out.String(), "pi") {
+		t.Fatalf("expected pi row in active output: %q", out.String())
+	}
+
+	if err := Run([]string{"active", "bad"}, &out, &out); err == nil {
+		t.Fatalf("expected invalid tool error")
+	}
+	if err := Run([]string{"active", "pi", "extra", "--root", root}, &out, &out); err == nil {
+		t.Fatalf("expected active usage error for extra arg")
+	}
+	if err := Run([]string{"active", "pi", "--bad-flag", "--root", root}, &out, &out); err == nil {
+		t.Fatalf("expected active parse error")
+	}
+	if err := Run([]string{"active", "pi", "--root", " "}, &out, &out); err == nil {
+		t.Fatalf("expected active NewManager error")
+	}
+
+	brokenRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(brokenRoot, "state.json"), 0o700); err != nil {
+		t.Fatalf("mkdir broken state path: %v", err)
+	}
+	if err := Run([]string{"active", "--root", brokenRoot}, &out, &out); err == nil {
+		t.Fatalf("expected active manager error")
+	}
+
+	codexSrc := filepath.Join(t.TempDir(), "codex.json")
+	writeFile(t, codexSrc, makeCodexAuthJSON(t, time.Now().Add(time.Hour)))
+	out.Reset()
+	if err := Run([]string{"save", "codex", "work", "--source", codexSrc, "--root", root}, &out, &out); err != nil {
+		t.Fatalf("save codex work: %v", err)
+	}
+	out.Reset()
+	if err := Run([]string{"save", "codex", "work-clone", "--source", codexSrc, "--root", root}, &out, &out); err != nil {
+		t.Fatalf("save codex work-clone: %v", err)
+	}
+	out.Reset()
+	if err := Run([]string{"use", "codex", "work", "--root", root}, &out, &out); err != nil {
+		t.Fatalf("use codex work: %v", err)
+	}
+	out.Reset()
+	if err := Run([]string{"active", "codex", "--verbose", "--root", root}, &out, &out); err != nil {
+		t.Fatalf("active codex verbose: %v", err)
+	}
+	if !strings.Contains(out.String(), "detail=multiple saved labels match current runtime auth") {
+		t.Fatalf("expected active verbose detail, got %q", out.String())
 	}
 }

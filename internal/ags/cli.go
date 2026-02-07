@@ -29,6 +29,8 @@ func Run(args []string, stdout io.Writer, stderr io.Writer) error {
 		return runDelete(args[1:], stdout)
 	case "list":
 		return runList(args[1:], stdout)
+	case "active":
+		return runActive(args[1:], stdout)
 	case "version", "--version", "-V":
 		return runVersion(stdout)
 	case "help", "--help", "-h":
@@ -46,7 +48,7 @@ func runHelp(args []string, stdout io.Writer) error {
 
 	command := strings.ToLower(args[0])
 	switch command {
-	case "save", "use", "delete", "list", "version":
+	case "save", "use", "delete", "list", "active", "version":
 		printCommandUsage(stdout, command)
 		return nil
 	default:
@@ -305,6 +307,59 @@ func runVersion(stdout io.Writer) error {
 	return nil
 }
 
+func runActive(args []string, stdout io.Writer) error {
+	if wantsHelp(args) {
+		printCommandUsage(stdout, "active")
+		return nil
+	}
+
+	var toolFilter *Tool
+	var flagArgs []string
+
+	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+		tool, ok := ParseTool(strings.ToLower(args[0]))
+		if !ok {
+			return fmt.Errorf("invalid tool %q. expected one of: codex, claude, pi", args[0])
+		}
+		toolFilter = &tool
+		flagArgs = args[1:]
+	} else {
+		flagArgs = args
+	}
+
+	fs := flag.NewFlagSet("active", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	root := fs.String("root", defaultRootDir(), "AGS data root directory")
+	verbose := fs.Bool("verbose", false, "Print additional detail lines")
+	if err := fs.Parse(flagArgs); err != nil {
+		return err
+	}
+	if fs.NArg() > 0 {
+		return errors.New("usage: ags active [tool] [--verbose] [--root <path>]")
+	}
+
+	manager, err := NewManager(*root)
+	if err != nil {
+		return err
+	}
+
+	items, err := manager.Active(toolFilter)
+	if err != nil {
+		return err
+	}
+
+	fmt.Fprintln(stdout, "tool\tactive label\tstatus\truntime")
+	for _, item := range items {
+		fmt.Fprintf(stdout, "%s\t%s\t%s\t%s\n", item.Tool, orDash(item.ActiveLabel), item.Status, item.RuntimePath)
+		if *verbose {
+			for _, detail := range item.Details {
+				fmt.Fprintf(stdout, "  detail=%s\n", detail)
+			}
+		}
+	}
+	return nil
+}
+
 func wantsHelp(args []string) bool {
 	for _, arg := range args {
 		if arg == "-h" || arg == "--help" {
@@ -461,6 +516,7 @@ COMMANDS:
   use       Activate a saved labeled snapshot for a tool.
   delete    Remove a saved labeled snapshot and its metadata.
   list      List saved snapshots with status and refresh signals.
+  active    Show which saved profile is currently active.
   version   Show CLI version.
   help      Show detailed help. Use "ags help <command>".
 
@@ -475,6 +531,7 @@ GLOBAL NOTES:
 QUICK START:
   ags save codex work
   ags use codex work
+  ags active codex
   ags list --verbose
 
 DETAIL:
@@ -482,6 +539,7 @@ DETAIL:
   ags help use
   ags help delete
   ags help list
+  ags help active
   ags version
 `
 }
@@ -563,6 +621,24 @@ EXAMPLES:
   ags list
   ags list codex
   ags list pi --verbose
+`
+	case "active":
+		return `ags active - show active saved profile
+
+USAGE:
+  ags active [tool] [--verbose] [--root <path>]
+
+FLAGS:
+  --verbose         Show additional detail lines
+  --root <path>     Optional AGS data root (default: ~/.config/ags)
+
+OUTPUT COLUMNS:
+  tool, active label, status, runtime
+
+EXAMPLES:
+  ags active
+  ags active codex
+  ags active pi --verbose
 `
 	case "version":
 		return `ags version - show CLI version

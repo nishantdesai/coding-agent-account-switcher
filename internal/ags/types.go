@@ -64,6 +64,14 @@ type ListItem struct {
 	AuthInsight AuthInsight
 }
 
+type ActiveItem struct {
+	Tool        Tool
+	ActiveLabel string
+	Status      string
+	RuntimePath string
+	Details     []string
+}
+
 type State struct {
 	Version int                   `json:"version"`
 	Entries map[string]StateEntry `json:"entries"`

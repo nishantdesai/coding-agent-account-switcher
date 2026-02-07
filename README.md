@@ -8,6 +8,7 @@
 - `ags use <tool> <label>` (also supports `--label` / `-l`)
 - `ags delete <tool> <label>` (also supports `--label` / `-l`)
 - `ags list [tool] [--verbose]`
+- `ags active [tool] [--verbose]`
 - `ags version`
 - `ags help [command]`
 
@@ -24,6 +25,7 @@ Supported tools in v1:
   - For `pi`, AGS now merges provider keys from the saved snapshot into the existing runtime file, so unrelated providers are preserved.
 - `delete`: removes a saved labeled snapshot and its state metadata for that tool.
 - `list`: shows all saved labels with status, expiry, and refresh-needed signal.
+- `active`: shows which saved label currently matches each tool runtime auth file.
 - `version`: prints CLI version.
 
 ## Refresh signal behavior

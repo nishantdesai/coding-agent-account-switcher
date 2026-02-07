@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 )
@@ -291,6 +292,135 @@ func (m *Manager) List(toolFilter *Tool) ([]ListItem, error) {
 	})
 
 	return items, nil
+}
+
+func (m *Manager) Active(toolFilter *Tool) ([]ActiveItem, error) {
+	state, err := m.loadState()
+	if err != nil {
+		return nil, err
+	}
+
+	tools := []Tool{ToolCodex, ToolClaude, ToolPi}
+	if toolFilter != nil {
+		tools = []Tool{*toolFilter}
+	}
+
+	items := make([]ActiveItem, 0, len(tools))
+	for _, tool := range tools {
+		runtimePath := m.paths[tool].DefaultRuntime
+		toolEntries := make([]StateEntry, 0)
+		for _, entry := range state.Entries {
+			parsedTool, ok := ParseTool(entry.Tool)
+			if ok && parsedTool == tool {
+				toolEntries = append(toolEntries, entry)
+			}
+		}
+
+		if len(toolEntries) == 0 {
+			items = append(items, ActiveItem{
+				Tool:        tool,
+				Status:      "no saved profiles",
+				RuntimePath: runtimePath,
+			})
+			continue
+		}
+
+		runtimeRaw, err := os.ReadFile(runtimePath)
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				items = append(items, ActiveItem{
+					Tool:        tool,
+					Status:      "runtime auth file missing",
+					RuntimePath: runtimePath,
+				})
+				continue
+			}
+			return nil, fmt.Errorf("reading runtime auth file for %s: %w", tool, err)
+		}
+		if err := validateJSONObject(runtimeRaw); err != nil {
+			items = append(items, ActiveItem{
+				Tool:        tool,
+				Status:      "runtime auth JSON invalid",
+				RuntimePath: runtimePath,
+			})
+			continue
+		}
+
+		matchedLabels := make([]string, 0)
+		switch tool {
+		case ToolPi:
+			var runtimeObj map[string]any
+			if err := unmarshalPIAuthJSON(runtimeRaw, &runtimeObj); err != nil {
+				return nil, fmt.Errorf("parsing runtime pi auth JSON: %w", err)
+			}
+			for _, entry := range toolEntries {
+				snapshotRaw, err := os.ReadFile(entry.SnapshotPath)
+				if err != nil {
+					continue
+				}
+				if err := validateJSONObject(snapshotRaw); err != nil {
+					continue
+				}
+				var snapshotObj map[string]any
+				if err := unmarshalPIAuthJSON(snapshotRaw, &snapshotObj); err != nil {
+					continue
+				}
+				if piProviderSubsetMatch(snapshotObj, runtimeObj) {
+					matchedLabels = append(matchedLabels, entry.Label)
+				}
+			}
+		default:
+			runtimeHash := sha256Hex(runtimeRaw)
+			for _, entry := range toolEntries {
+				if entry.SHA256 == runtimeHash {
+					matchedLabels = append(matchedLabels, entry.Label)
+				}
+			}
+		}
+
+		sort.Strings(matchedLabels)
+		switch len(matchedLabels) {
+		case 0:
+			items = append(items, ActiveItem{
+				Tool:        tool,
+				Status:      "no matching saved profile",
+				RuntimePath: runtimePath,
+			})
+		case 1:
+			items = append(items, ActiveItem{
+				Tool:        tool,
+				ActiveLabel: matchedLabels[0],
+				Status:      "match",
+				RuntimePath: runtimePath,
+			})
+		default:
+			items = append(items, ActiveItem{
+				Tool:        tool,
+				ActiveLabel: strings.Join(matchedLabels, ","),
+				Status:      "ambiguous",
+				RuntimePath: runtimePath,
+				Details:     []string{"multiple saved labels match current runtime auth"},
+			})
+		}
+	}
+
+	return items, nil
+}
+
+func piProviderSubsetMatch(snapshotObj map[string]any, runtimeObj map[string]any) bool {
+	if len(snapshotObj) == 0 {
+		return false
+	}
+	for provider, snapshotAuth := range snapshotObj {
+		runtimeAuth, ok := runtimeObj[provider]
+		if !ok {
+			return false
+		}
+		if !reflect.DeepEqual(snapshotAuth, runtimeAuth) {
+			return false
+		}
+	}
+	return true
 }
 
 func (m *Manager) resolveSourcePath(tool Tool, sourceOverride string) (string, error) {

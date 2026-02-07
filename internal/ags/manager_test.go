@@ -773,3 +773,264 @@ func TestManagerUsePiMergeErrorPath(t *testing.T) {
 		t.Fatalf("expected pi merge error for invalid target JSON")
 	}
 }
+
+func TestPiProviderSubsetMatch(t *testing.T) {
+	if piProviderSubsetMatch(map[string]any{}, map[string]any{"x": 1}) {
+		t.Fatalf("empty snapshot should not match")
+	}
+	if !piProviderSubsetMatch(
+		map[string]any{"openai-codex": map[string]any{"access": "a"}},
+		map[string]any{"openai-codex": map[string]any{"access": "a"}, "anthropic": map[string]any{"access": "b"}},
+	) {
+		t.Fatalf("subset provider match expected")
+	}
+	if piProviderSubsetMatch(
+		map[string]any{"openai-codex": map[string]any{"access": "a"}},
+		map[string]any{"anthropic": map[string]any{"access": "b"}},
+	) {
+		t.Fatalf("missing provider should not match")
+	}
+	if piProviderSubsetMatch(
+		map[string]any{"openai-codex": map[string]any{"access": "a"}},
+		map[string]any{"openai-codex": map[string]any{"access": "b"}},
+	) {
+		t.Fatalf("different auth payload should not match")
+	}
+}
+
+func TestManagerActive(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	root := t.TempDir()
+	m, err := NewManager(root)
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+
+	items, err := m.Active(nil)
+	if err != nil {
+		t.Fatalf("Active no profiles: %v", err)
+	}
+	if len(items) != 3 {
+		t.Fatalf("expected 3 tools, got %+v", items)
+	}
+
+	codexSrc := filepath.Join(t.TempDir(), "codex.json")
+	writeFile(t, codexSrc, makeCodexAuthJSON(t, time.Now().Add(time.Hour)))
+	if _, err := m.Save(ToolCodex, "work", codexSrc); err != nil {
+		t.Fatalf("save codex work: %v", err)
+	}
+
+	codexTarget := filepath.Join(home, ".codex", "auth.json")
+	writeFile(t, codexTarget, makeCodexAuthJSON(t, time.Now().Add(2*time.Hour)))
+	filtered := ToolCodex
+	items, err = m.Active(&filtered)
+	if err != nil {
+		t.Fatalf("Active codex no match: %v", err)
+	}
+	if len(items) != 1 || items[0].Status != "no matching saved profile" {
+		t.Fatalf("unexpected active no match result: %+v", items)
+	}
+
+	if _, err := m.Use(ToolCodex, "work", ""); err != nil {
+		t.Fatalf("use codex work default target: %v", err)
+	}
+	items, err = m.Active(&filtered)
+	if err != nil {
+		t.Fatalf("Active codex match: %v", err)
+	}
+	if len(items) != 1 || items[0].Status != "match" || items[0].ActiveLabel != "work" {
+		t.Fatalf("unexpected active match result: %+v", items)
+	}
+
+	if _, err := m.Save(ToolCodex, "work-clone", codexSrc); err != nil {
+		t.Fatalf("save codex clone: %v", err)
+	}
+	items, err = m.Active(&filtered)
+	if err != nil {
+		t.Fatalf("Active codex ambiguous: %v", err)
+	}
+	if len(items) != 1 || items[0].Status != "ambiguous" {
+		t.Fatalf("unexpected ambiguous result: %+v", items)
+	}
+
+	piSrc := filepath.Join(t.TempDir(), "pi.json")
+	writeFile(t, piSrc, []byte(`{"openai-codex":{"access":"codex-work"}}`))
+	if _, err := m.Save(ToolPi, "work", piSrc); err != nil {
+		t.Fatalf("save pi work: %v", err)
+	}
+	piTarget := filepath.Join(home, ".pi", "agent", "auth.json")
+	writeFile(t, piTarget, []byte(`{"openai-codex":{"access":"codex-work"},"anthropic":{"access":"anthro"}}`))
+	piTool := ToolPi
+	items, err = m.Active(&piTool)
+	if err != nil {
+		t.Fatalf("Active pi match: %v", err)
+	}
+	if len(items) != 1 || items[0].Status != "match" || items[0].ActiveLabel != "work" {
+		t.Fatalf("unexpected pi active result: %+v", items)
+	}
+
+	if err := os.Remove(piTarget); err != nil {
+		t.Fatalf("remove pi runtime: %v", err)
+	}
+	items, err = m.Active(&piTool)
+	if err != nil {
+		t.Fatalf("Active pi missing runtime: %v", err)
+	}
+	if len(items) != 1 || items[0].Status != "runtime auth file missing" {
+		t.Fatalf("unexpected pi missing runtime result: %+v", items)
+	}
+}
+
+func TestManagerActiveErrors(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	root := t.TempDir()
+	m, err := NewManager(root)
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+
+	if err := os.MkdirAll(m.statePath(), 0o700); err != nil {
+		t.Fatalf("mkdir state path: %v", err)
+	}
+	if _, err := m.Active(nil); err == nil {
+		t.Fatalf("expected active loadState error")
+	}
+
+	root2 := t.TempDir()
+	m2, err := NewManager(root2)
+	if err != nil {
+		t.Fatalf("NewManager root2: %v", err)
+	}
+	piSrc := filepath.Join(t.TempDir(), "pi.json")
+	writeFile(t, piSrc, []byte(`{"openai-codex":{"access":"codex-work"}}`))
+	if _, err := m2.Save(ToolPi, "work", piSrc); err != nil {
+		t.Fatalf("save pi work: %v", err)
+	}
+	piTarget := filepath.Join(home, ".pi", "agent", "auth.json")
+	writeFile(t, piTarget, []byte(`{"openai-codex":{"access":"codex-work"}`))
+	piTool := ToolPi
+	items, err := m2.Active(&piTool)
+	if err != nil {
+		t.Fatalf("Active with invalid runtime json should not hard fail: %v", err)
+	}
+	if len(items) != 1 || items[0].Status != "runtime auth JSON invalid" {
+		t.Fatalf("unexpected active invalid runtime result: %+v", items)
+	}
+
+	codexSrc := filepath.Join(t.TempDir(), "codex.json")
+	writeFile(t, codexSrc, makeCodexAuthJSON(t, time.Now().Add(time.Hour)))
+	if _, err := m2.Save(ToolCodex, "work", codexSrc); err != nil {
+		t.Fatalf("save codex work: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(home, ".codex", "auth.json"), 0o700); err != nil {
+		t.Fatalf("mkdir codex runtime dir: %v", err)
+	}
+	codexTool := ToolCodex
+	if _, err := m2.Active(&codexTool); err == nil {
+		t.Fatalf("expected active runtime read error for codex")
+	}
+}
+
+func TestManagerActivePiRuntimeParseErrorViaSeam(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	root := t.TempDir()
+	m, err := NewManager(root)
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+
+	piSrc := filepath.Join(t.TempDir(), "pi.json")
+	writeFile(t, piSrc, []byte(`{"openai-codex":{"access":"codex-work"}}`))
+	if _, err := m.Save(ToolPi, "work", piSrc); err != nil {
+		t.Fatalf("save pi work: %v", err)
+	}
+	piTarget := filepath.Join(home, ".pi", "agent", "auth.json")
+	writeFile(t, piTarget, []byte(`{"openai-codex":{"access":"codex-work"},"runtime-only":true}`))
+
+	restore := restoreManagerSeams()
+	defer restore()
+	unmarshalPIAuthJSON = func([]byte, any) error { return os.ErrInvalid }
+
+	piTool := ToolPi
+	if _, err := m.Active(&piTool); err == nil || !strings.Contains(err.Error(), "parsing runtime pi auth JSON") {
+		t.Fatalf("expected runtime parse error, got %v", err)
+	}
+}
+
+func TestManagerActivePiSnapshotScanBranches(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	root := t.TempDir()
+	m, err := NewManager(root)
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+
+	goodSnap := filepath.Join(t.TempDir(), "good.json")
+	writeFile(t, goodSnap, []byte(`{"openai-codex":{"access":"codex-work"}}`))
+	if _, err := m.Save(ToolPi, "good", goodSnap); err != nil {
+		t.Fatalf("save pi good: %v", err)
+	}
+
+	state, err := m.loadState()
+	if err != nil {
+		t.Fatalf("loadState: %v", err)
+	}
+
+	dirSnap := filepath.Join(t.TempDir(), "snap-dir")
+	if err := os.MkdirAll(dirSnap, 0o700); err != nil {
+		t.Fatalf("mkdir dir snapshot: %v", err)
+	}
+	state.Entries[stateKey(ToolPi, "dir")] = StateEntry{
+		Tool:         ToolPi.String(),
+		Label:        "dir",
+		SnapshotPath: dirSnap,
+		SavedAt:      nowISO(),
+	}
+
+	invalidSnap := filepath.Join(t.TempDir(), "invalid.json")
+	writeFile(t, invalidSnap, []byte("not-json"))
+	state.Entries[stateKey(ToolPi, "invalid")] = StateEntry{
+		Tool:         ToolPi.String(),
+		Label:        "invalid",
+		SnapshotPath: invalidSnap,
+		SavedAt:      nowISO(),
+	}
+
+	seamSnap := filepath.Join(t.TempDir(), "seam.json")
+	writeFile(t, seamSnap, []byte(`{"openai-codex":{"access":"other"}}`))
+	state.Entries[stateKey(ToolPi, "seam")] = StateEntry{
+		Tool:         ToolPi.String(),
+		Label:        "seam",
+		SnapshotPath: seamSnap,
+		SavedAt:      nowISO(),
+	}
+
+	if err := m.saveState(state); err != nil {
+		t.Fatalf("saveState: %v", err)
+	}
+
+	piTarget := filepath.Join(home, ".pi", "agent", "auth.json")
+	writeFile(t, piTarget, []byte(`{"openai-codex":{"access":"codex-work"},"runtime-only":true}`))
+
+	restore := restoreManagerSeams()
+	defer restore()
+	unmarshalPIAuthJSON = func(raw []byte, v any) error {
+		if strings.Contains(string(raw), "\"runtime-only\":true") {
+			return json.Unmarshal(raw, v)
+		}
+		return os.ErrInvalid
+	}
+
+	piTool := ToolPi
+	items, err := m.Active(&piTool)
+	if err != nil {
+		t.Fatalf("Active pi with snapshot scan branches: %v", err)
+	}
+	if len(items) != 1 || items[0].Status != "no matching saved profile" {
+		t.Fatalf("unexpected active result: %+v", items)
+	}
+}
