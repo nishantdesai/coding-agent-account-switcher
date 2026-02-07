@@ -12,9 +12,8 @@ Project memory and contributor guide for `coding-agent-account-switcher`.
   - `ags list [tool] [--verbose]`
 - v1 tools are exactly:
   - `codex`
-  - `claude`
   - `pi`
-- Cross-tool linking/composition (for example, codex/claude -> pi) is deferred to a later release.
+- Cross-tool linking/composition (for example, codex + pi -> unified profile) is deferred to a later release.
 
 ## Product Intent
 
@@ -45,11 +44,6 @@ Project memory and contributor guide for `coding-agent-account-switcher`.
 
 - Codex: `~/.codex/auth.json`
 - Pi: `~/.pi/agent/auth.json`
-- Claude save candidates (in order):
-  - `~/.claude.json`
-  - `~/.claude/auth.json`
-  - `~/.config/claude/auth.json`
-  - `~/.claude.json.backup`
 
 `--source` and `--target` can override file paths when needed.
 
@@ -78,8 +72,7 @@ Project memory and contributor guide for `coding-agent-account-switcher`.
 ## Near-Term Roadmap
 
 1. Add tests for save/use/list flows and expiry parsing edge cases.
-2. Improve Claude adapter reliability (confirm canonical auth source).
-3. Add `link` command for profile composition (codex + claude -> pi).
+2. Add `link` command for profile composition (codex + pi -> unified profile).
 4. Add Homebrew + Goreleaser packaging.
 5. Add optional auto-refresh workflow where supported by tool auth mechanisms.
 
@@ -91,12 +84,11 @@ go build -o ags ./cmd/ags
 
 # Save current auth into labeled snapshots
 ./ags save codex work
-./ags save claude personal
-./ags save pi work
+./ags save pi personal
 
 # Switch to a saved snapshot
 ./ags use codex work
-./ags use pi work
+./ags use pi personal
 
 # Delete a saved snapshot
 ./ags delete codex work

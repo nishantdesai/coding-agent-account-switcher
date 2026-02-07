@@ -15,7 +15,6 @@
 Supported tools in v1:
 
 - `codex`
-- `claude`
 - `pi`
 
 ## What each command does
@@ -42,12 +41,12 @@ This is based on snapshot hash differences between uses.
 
 - `codex`: `~/.codex/auth.json`
 - `pi`: `~/.pi/agent/auth.json`
-- `claude`: `~/.claude.json` (fallback candidates are checked during `save`)
 
 You can override paths:
-
-- `ags save claude work --source /path/to/auth.json`
-- `ags use claude work --target /path/to/auth.json`
+ - `ags save codex work --source /path/to/auth.json`
+ - `ags use codex work --target /path/to/auth.json`
+ - `ags save pi work --source /path/to/auth.json`
+ - `ags use pi work --target /path/to/auth.json`
 
 ## Data storage
 
