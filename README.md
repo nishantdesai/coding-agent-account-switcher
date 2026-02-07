@@ -4,9 +4,11 @@
 
 ## V1 command model
 
-- `ags save <tool> --label <name>`
-- `ags use <tool> --label <name>`
+- `ags save <tool> <label>` (also supports `--label` / `-l`)
+- `ags use <tool> <label>` (also supports `--label` / `-l`)
+- `ags delete <tool> <label>` (also supports `--label` / `-l`)
 - `ags list [tool] [--verbose]`
+- `ags help [command]`
 
 Supported tools in v1:
 
@@ -18,6 +20,7 @@ Supported tools in v1:
 
 - `save`: copies the current tool auth file into AGS-managed storage under a label.
 - `use`: writes the saved labeled snapshot back into that tool's runtime auth file.
+- `delete`: removes a saved labeled snapshot and its state metadata for that tool.
 - `list`: shows all saved labels with status, expiry, and refresh-needed signal.
 
 ## Refresh signal behavior
@@ -38,8 +41,8 @@ This is based on snapshot hash differences between uses.
 
 You can override paths:
 
-- `ags save claude --label work --source /path/to/auth.json`
-- `ags use claude --label work --target /path/to/auth.json`
+- `ags save claude work --source /path/to/auth.json`
+- `ags use claude work --target /path/to/auth.json`
 
 ## Data storage
 

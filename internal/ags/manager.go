@@ -166,6 +166,40 @@ func (m *Manager) Use(tool Tool, label string, targetOverride string) (*UseResul
 	}, nil
 }
 
+func (m *Manager) Delete(tool Tool, label string) (*DeleteResult, error) {
+	state, err := m.loadState()
+	if err != nil {
+		return nil, err
+	}
+
+	key := stateKey(tool, label)
+	entry, ok := state.Entries[key]
+	if !ok {
+		return nil, fmt.Errorf("no saved snapshot for %s label=%q", tool, label)
+	}
+
+	snapshotDeleted := false
+	if err := os.Remove(entry.SnapshotPath); err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			return nil, fmt.Errorf("deleting snapshot file: %w", err)
+		}
+	} else {
+		snapshotDeleted = true
+	}
+
+	delete(state.Entries, key)
+	if err := m.saveState(state); err != nil {
+		return nil, err
+	}
+
+	return &DeleteResult{
+		Tool:            tool,
+		Label:           label,
+		SnapshotPath:    entry.SnapshotPath,
+		SnapshotDeleted: snapshotDeleted,
+	}, nil
+}
+
 func (m *Manager) List(toolFilter *Tool) ([]ListItem, error) {
 	state, err := m.loadState()
 	if err != nil {

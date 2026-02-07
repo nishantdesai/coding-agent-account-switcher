@@ -41,11 +41,18 @@ type SaveResult struct {
 }
 
 type UseResult struct {
-	Tool                 Tool
-	Label                string
-	TargetPath           string
-	ChangeSinceLastUse   string
-	Insight              AuthInsight
+	Tool               Tool
+	Label              string
+	TargetPath         string
+	ChangeSinceLastUse string
+	Insight            AuthInsight
+}
+
+type DeleteResult struct {
+	Tool            Tool
+	Label           string
+	SnapshotPath    string
+	SnapshotDeleted bool
 }
 
 type ListItem struct {
@@ -58,19 +65,19 @@ type ListItem struct {
 }
 
 type State struct {
-	Version int                    `json:"version"`
-	Entries map[string]StateEntry  `json:"entries"`
+	Version int                   `json:"version"`
+	Entries map[string]StateEntry `json:"entries"`
 }
 
 type StateEntry struct {
-	Tool          string `json:"tool"`
-	Label         string `json:"label"`
-	SourcePath    string `json:"source_path"`
-	SnapshotPath  string `json:"snapshot_path"`
-	SHA256        string `json:"sha256"`
-	SavedAt       string `json:"saved_at"`
-	LastUsedAt    string `json:"last_used_at,omitempty"`
-	LastUsedSHA   string `json:"last_used_sha256,omitempty"`
+	Tool         string `json:"tool"`
+	Label        string `json:"label"`
+	SourcePath   string `json:"source_path"`
+	SnapshotPath string `json:"snapshot_path"`
+	SHA256       string `json:"sha256"`
+	SavedAt      string `json:"saved_at"`
+	LastUsedAt   string `json:"last_used_at,omitempty"`
+	LastUsedSHA  string `json:"last_used_sha256,omitempty"`
 }
 
 type Manager struct {
