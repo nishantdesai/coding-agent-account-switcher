@@ -11,13 +11,18 @@ import (
 
 func jwtWithExp(t *testing.T, exp any) string {
 	t.Helper()
+	return jwtWithClaims(t, map[string]any{"exp": exp})
+}
+
+func jwtWithClaims(t *testing.T, claims map[string]any) string {
+	t.Helper()
 	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"none"}`))
-	claimsBytes, err := json.Marshal(map[string]any{"exp": exp})
+	claimsBytes, err := json.Marshal(claims)
 	if err != nil {
 		t.Fatalf("marshal claims: %v", err)
 	}
-	claims := base64.RawURLEncoding.EncodeToString(claimsBytes)
-	return header + "." + claims + ".sig"
+	encodedClaims := base64.RawURLEncoding.EncodeToString(claimsBytes)
+	return header + "." + encodedClaims + ".sig"
 }
 
 func TestInspectAuthDispatch(t *testing.T) {
@@ -114,8 +119,17 @@ func TestInspectPiBranches(t *testing.T) {
 
 func TestInspectPiTokenDetails(t *testing.T) {
 	expMillis := time.Now().UTC().Add(time.Hour).UnixMilli()
-	jwt := jwtWithExp(t, time.Now().UTC().Add(time.Hour).Unix())
-	raw := `{"openai-codex":{"access":"` + jwt + `","expires":` + strconv.FormatInt(expMillis, 10) + `},"anthropic":{"access":"opaque-token","expires":` + strconv.FormatInt(expMillis, 10) + `}}`
+	jwt := jwtWithClaims(t, map[string]any{
+		"exp": time.Now().UTC().Add(time.Hour).Unix(),
+		"https://api.openai.com/profile": map[string]any{
+			"email": "pi.person@company.com",
+		},
+		"auth": map[string]any{
+			"chatgpt_plan_type": "pro",
+		},
+		"account_id": "acct_from_jwt",
+	})
+	raw := `{"openai-codex":{"access":"` + jwt + `","expires":` + strconv.FormatInt(expMillis, 10) + `,"accountId":"acct_from_entry"},"anthropic":{"access":"opaque-token","expires":` + strconv.FormatInt(expMillis, 10) + `}}`
 	got := inspectPi([]byte(raw))
 	joined := strings.Join(got.Details, " ")
 	if !strings.Contains(joined, "openai-codex=valid") {
@@ -123,6 +137,15 @@ func TestInspectPiTokenDetails(t *testing.T) {
 	}
 	if !strings.Contains(joined, "anthropic=valid") {
 		t.Fatalf("expected anthropic status detail, got %+v", got.Details)
+	}
+	if got.AccountEmail != "pi.person@company.com" {
+		t.Fatalf("expected account email from openai-codex access JWT, got %+v", got)
+	}
+	if got.AccountPlan != "Pro" {
+		t.Fatalf("expected normalized plan from JWT, got %+v", got)
+	}
+	if got.AccountID != "acct_from_entry" {
+		t.Fatalf("expected account id from provider entry, got %+v", got)
 	}
 }
 

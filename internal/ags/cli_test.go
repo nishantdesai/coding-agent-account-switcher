@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -107,6 +108,32 @@ func TestCLIEndToEndSaveUseListDelete(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "No saved profiles found.") {
 		t.Fatalf("expected empty list message, got %q", out.String())
+	}
+}
+
+func TestCLISavePiShowsIdentityWhenAvailable(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	root := t.TempDir()
+	source := filepath.Join(root, "pi-source.json")
+
+	accessToken := makeJWT(t, map[string]any{
+		"exp": time.Now().UTC().Add(2 * time.Hour).Unix(),
+		"https://api.openai.com/profile": map[string]any{
+			"email": "pi.person@company.com",
+		},
+		"auth": map[string]any{
+			"chatgpt_plan_type": "plus",
+		},
+	})
+	raw := `{"openai-codex":{"type":"oauth","access":"` + accessToken + `","expires":` + strconv.FormatInt(time.Now().UTC().Add(2*time.Hour).UnixMilli(), 10) + `}}`
+	writeFile(t, source, []byte(raw))
+
+	var out bytes.Buffer
+	if err := Run([]string{"save", "pi", "work", "--source", source, "--root", root}, &out, &out); err != nil {
+		t.Fatalf("save pi with identity: %v", err)
+	}
+	if !strings.Contains(out.String(), "Saved pi.person@company.com (Plus) for work") {
+		t.Fatalf("expected pi identity in save output, got %q", out.String())
 	}
 }
 

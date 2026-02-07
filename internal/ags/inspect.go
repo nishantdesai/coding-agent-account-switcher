@@ -103,12 +103,24 @@ func inspectPi(raw []byte) AuthInsight {
 		status    string
 		expiresAt time.Time
 	}
+	insight := AuthInsight{
+		Status:       "unknown",
+		NeedsRefresh: "unknown",
+	}
 	statuses := []providerStatus{}
+
+	// Pi commonly stores Codex account context under this provider key.
+	if openAICodex, ok := payload["openai-codex"].(map[string]any); ok {
+		mergePIProviderIdentity(&insight, openAICodex)
+	}
 
 	for key, value := range payload {
 		entry, ok := value.(map[string]any)
 		if !ok {
 			continue
+		}
+		if key != "openai-codex" {
+			mergePIProviderIdentity(&insight, entry)
 		}
 
 		expRaw, ok := entry["expires"]
@@ -128,11 +140,8 @@ func inspectPi(raw []byte) AuthInsight {
 	}
 
 	if len(statuses) == 0 {
-		return AuthInsight{
-			Status:       "unknown",
-			NeedsRefresh: "unknown",
-			Details:      []string{"no provider expires fields found"},
-		}
+		insight.Details = []string{"no provider expires fields found"}
+		return insight
 	}
 
 	sort.Slice(statuses, func(i, j int) bool {
@@ -145,11 +154,60 @@ func inspectPi(raw []byte) AuthInsight {
 		details = append(details, fmt.Sprintf("%s=%s (%s)", s.name, s.status, s.expiresAt.Format(time.RFC3339)))
 	}
 
-	return AuthInsight{
-		Status:       worst.status,
-		ExpiresAt:    worst.expiresAt.Format(time.RFC3339),
-		NeedsRefresh: needsRefreshFromStatus(worst.status),
-		Details:      details,
+	insight.Status = worst.status
+	insight.ExpiresAt = worst.expiresAt.Format(time.RFC3339)
+	insight.NeedsRefresh = needsRefreshFromStatus(worst.status)
+	insight.Details = details
+	return insight
+}
+
+func mergePIProviderIdentity(insight *AuthInsight, entry map[string]any) {
+	if insight == nil {
+		return
+	}
+
+	if insight.AccountID == "" {
+		if accountID := extractStringClaim(entry, "accountId"); accountID != "" {
+			insight.AccountID = accountID
+		} else if accountID := extractStringClaim(entry, "account_id"); accountID != "" {
+			insight.AccountID = accountID
+		}
+	}
+	if insight.AccountEmail == "" {
+		if email := extractStringClaim(entry, "email"); email != "" {
+			insight.AccountEmail = email
+		}
+	}
+	if insight.AccountPlan == "" {
+		if plan := extractStringClaim(entry, "plan"); plan != "" {
+			insight.AccountPlan = normalizePlan(plan)
+		}
+	}
+
+	accessToken := extractStringClaim(entry, "access")
+	if accessToken == "" {
+		return
+	}
+
+	tokenInfo := inspectAccessToken(accessToken)
+	if !tokenInfo.IsJWT {
+		return
+	}
+
+	if insight.AccountEmail == "" {
+		if email := resolveCodexEmailFromJWT(tokenInfo); email != "" {
+			insight.AccountEmail = email
+		}
+	}
+	if insight.AccountPlan == "" {
+		if plan := resolveCodexPlanFromJWT(tokenInfo); plan != "" {
+			insight.AccountPlan = normalizePlan(plan)
+		}
+	}
+	if insight.AccountID == "" {
+		if accountID := resolveCodexAccountIDFromJWT(tokenInfo); accountID != "" {
+			insight.AccountID = accountID
+		}
 	}
 }
 
