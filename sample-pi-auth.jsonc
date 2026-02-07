@@ -1,0 +1,18 @@
+// Runtime file should be stored as ~/.pi/agent/auth.json (strict JSON, no comments).
+// This .jsonc file is a commented sample/template only.
+{
+  "anthropic": {
+    "type": "oauth",
+    "refresh": "refresh-token",
+    "access": "access-token",
+    "expires": 1770427764565
+  },
+  "openai-codex": {
+    // For org-based accounts where auth mode is chatgpt.
+    "type": "oauth",
+    "access": "access-token",
+    "refresh": "refresh-token",
+    "expires": 1771264880518,
+    "accountId": "account-id-that-is-alpha-numeric-with-hyphens"
+  }
+}

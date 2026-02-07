@@ -1,0 +1,14 @@
+// Runtime file should be stored as ~/.codex/auth.json (strict JSON, no comments).
+// This .jsonc file is a commented sample/template only.
+{
+  // Can be absent for personal accounts; often present for organization accounts.
+  "auth_mode": "chatgpt",
+  "OPENAI_API_KEY": null,
+  "tokens": {
+    "id_token": "some-token-that-is-long",
+    "access_token": "another_token_that_is_long",
+    "refresh_token": "refresh_token_that_is_long",
+    "account_id": "account-id-that-is-alpha-numeric-with-hyphens"
+  },
+  "last_refresh": "2026-02-03T11:33:29.335954Z"
+}
