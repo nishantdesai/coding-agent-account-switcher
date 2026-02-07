@@ -88,6 +88,12 @@ func inspectCodex(raw []byte) AuthInsight {
 	return insight
 }
 
+type piIdentityCandidate struct {
+	AccountEmail string
+	AccountPlan  string
+	AccountID    string
+}
+
 func inspectPi(raw []byte) AuthInsight {
 	var payload map[string]any
 	if err := json.Unmarshal(raw, &payload); err != nil {
@@ -108,19 +114,26 @@ func inspectPi(raw []byte) AuthInsight {
 		NeedsRefresh: "unknown",
 	}
 	statuses := []providerStatus{}
-
-	// Pi commonly stores Codex account context under this provider key.
-	if openAICodex, ok := payload["openai-codex"].(map[string]any); ok {
-		mergePIProviderIdentity(&insight, openAICodex)
-	}
+	codexIdentity := piIdentityCandidate{}
+	claudeIdentity := piIdentityCandidate{}
+	otherIdentity := piIdentityCandidate{}
 
 	for key, value := range payload {
 		entry, ok := value.(map[string]any)
 		if !ok {
 			continue
 		}
-		if key != "openai-codex" {
-			mergePIProviderIdentity(&insight, entry)
+
+		tokenInfo := inspectAccessToken(extractStringClaim(entry, "access"))
+		role := classifyPIProviderRole(key, tokenInfo)
+		identity := extractPIProviderIdentity(entry, tokenInfo)
+		switch role {
+		case "codex":
+			codexIdentity = mergePIIdentityCandidate(codexIdentity, identity)
+		case "claude":
+			claudeIdentity = mergePIIdentityCandidate(claudeIdentity, identity)
+		default:
+			otherIdentity = mergePIIdentityCandidate(otherIdentity, identity)
 		}
 
 		expRaw, ok := entry["expires"]
@@ -133,11 +146,16 @@ func inspectPi(raw []byte) AuthInsight {
 		}
 		expiry := time.UnixMilli(int64(expMillis)).UTC()
 		statuses = append(statuses, providerStatus{
-			name:      key,
+			name:      displayPIProviderName(key, role),
 			status:    classifyExpiry(expiry),
 			expiresAt: expiry,
 		})
 	}
+
+	selectedIdentity := choosePIIdentityCandidate(codexIdentity, claudeIdentity, otherIdentity)
+	insight.AccountEmail = selectedIdentity.AccountEmail
+	insight.AccountPlan = selectedIdentity.AccountPlan
+	insight.AccountID = selectedIdentity.AccountID
 
 	if len(statuses) == 0 {
 		insight.Details = []string{"no provider expires fields found"}
@@ -161,54 +179,177 @@ func inspectPi(raw []byte) AuthInsight {
 	return insight
 }
 
-func mergePIProviderIdentity(insight *AuthInsight, entry map[string]any) {
-	if insight == nil {
-		return
+func displayPIProviderName(providerKey string, role string) string {
+	switch role {
+	case "codex", "claude":
+		return role
+	default:
+		return providerKey
+	}
+}
+
+func classifyPIProviderRole(providerKey string, tokenInfo accessTokenInsight) string {
+	key := strings.ToLower(strings.TrimSpace(providerKey))
+	switch {
+	case strings.Contains(key, "codex"), strings.Contains(key, "openai"):
+		return "codex"
+	case strings.Contains(key, "claude"), strings.Contains(key, "anthropic"):
+		return "claude"
 	}
 
-	if insight.AccountID == "" {
-		if accountID := extractStringClaim(entry, "accountId"); accountID != "" {
-			insight.AccountID = accountID
-		} else if accountID := extractStringClaim(entry, "account_id"); accountID != "" {
-			insight.AccountID = accountID
+	issuer := strings.ToLower(strings.TrimSpace(tokenInfo.Issuer))
+	audience := strings.ToLower(strings.TrimSpace(tokenInfo.Audience))
+	switch {
+	case strings.Contains(issuer, "openai"), strings.Contains(audience, "openai"):
+		return "codex"
+	case strings.Contains(issuer, "anthropic"), strings.Contains(audience, "anthropic"):
+		return "claude"
+	default:
+		return "other"
+	}
+}
+
+func mergePIIdentityCandidate(base piIdentityCandidate, incoming piIdentityCandidate) piIdentityCandidate {
+	if base.AccountEmail == "" {
+		base.AccountEmail = incoming.AccountEmail
+	}
+	if base.AccountPlan == "" {
+		base.AccountPlan = incoming.AccountPlan
+	}
+	if base.AccountID == "" {
+		base.AccountID = incoming.AccountID
+	}
+	return base
+}
+
+func choosePIIdentityCandidate(candidates ...piIdentityCandidate) piIdentityCandidate {
+	for _, c := range candidates {
+		if strings.TrimSpace(c.AccountEmail) != "" {
+			return c
 		}
 	}
-	if insight.AccountEmail == "" {
-		if email := extractStringClaim(entry, "email"); email != "" {
-			insight.AccountEmail = email
+	for _, c := range candidates {
+		if strings.TrimSpace(c.AccountPlan) != "" || strings.TrimSpace(c.AccountID) != "" {
+			return c
 		}
 	}
-	if insight.AccountPlan == "" {
-		if plan := extractStringClaim(entry, "plan"); plan != "" {
-			insight.AccountPlan = normalizePlan(plan)
+	return piIdentityCandidate{}
+}
+
+func extractPIProviderIdentity(entry map[string]any, tokenInfo accessTokenInsight) piIdentityCandidate {
+	candidate := piIdentityCandidate{
+		AccountID: firstNonEmpty(
+			extractStringClaim(entry, "accountId"),
+			extractStringClaim(entry, "account_id"),
+		),
+		AccountEmail: firstNonEmpty(
+			extractStringClaim(entry, "email"),
+			extractStringClaim(entry, "email_address"),
+			extractStringClaim(entry, "account_email"),
+			extractStringClaim(entry, "user_email"),
+		),
+		AccountPlan: normalizePlan(firstNonEmpty(
+			extractStringClaim(entry, "plan"),
+			extractStringClaim(entry, "rate_limit_tier"),
+			extractStringClaim(entry, "tier"),
+		)),
+	}
+
+	if tokenInfo.IsJWT {
+		if candidate.AccountEmail == "" {
+			candidate.AccountEmail = resolveAnyProviderEmailFromJWT(tokenInfo)
+		}
+		if candidate.AccountPlan == "" {
+			if plan := resolveAnyProviderPlanFromJWT(tokenInfo); plan != "" {
+				candidate.AccountPlan = normalizePlan(plan)
+			}
+		}
+		if candidate.AccountID == "" {
+			candidate.AccountID = resolveAnyProviderAccountIDFromJWT(tokenInfo)
 		}
 	}
 
-	accessToken := extractStringClaim(entry, "access")
-	if accessToken == "" {
-		return
+	return candidate
+}
+
+func resolveAnyProviderEmailFromJWT(info accessTokenInsight) string {
+	if !info.IsJWT {
+		return ""
+	}
+	if email := resolveCodexEmailFromJWT(info); email != "" {
+		return email
 	}
 
-	tokenInfo := inspectAccessToken(accessToken)
-	if !tokenInfo.IsJWT {
-		return
+	for _, key := range []string{"email_address", "account_email", "user_email", "preferred_username", "upn"} {
+		if candidate := extractStringClaim(info.Claims, key); looksLikeEmail(candidate) {
+			return candidate
+		}
 	}
 
-	if insight.AccountEmail == "" {
-		if email := resolveCodexEmailFromJWT(tokenInfo); email != "" {
-			insight.AccountEmail = email
+	for _, nestedKey := range []string{
+		"user",
+		"account",
+		"profile",
+		"https://claude.ai/account",
+		"https://api.anthropic.com/account",
+	} {
+		nested, ok := info.Claims[nestedKey].(map[string]any)
+		if !ok {
+			continue
+		}
+		for _, key := range []string{"email", "email_address", "account_email", "user_email", "preferred_username", "upn"} {
+			if candidate := extractStringClaim(nested, key); looksLikeEmail(candidate) {
+				return candidate
+			}
 		}
 	}
-	if insight.AccountPlan == "" {
-		if plan := resolveCodexPlanFromJWT(tokenInfo); plan != "" {
-			insight.AccountPlan = normalizePlan(plan)
+
+	return ""
+}
+
+func resolveAnyProviderPlanFromJWT(info accessTokenInsight) string {
+	if !info.IsJWT {
+		return ""
+	}
+	if plan := resolveCodexPlanFromJWT(info); plan != "" {
+		return plan
+	}
+	for _, key := range []string{"plan", "rate_limit_tier", "tier", "subscription_tier", "billing_type"} {
+		if plan := extractStringClaim(info.Claims, key); plan != "" {
+			return plan
 		}
 	}
-	if insight.AccountID == "" {
-		if accountID := resolveCodexAccountIDFromJWT(tokenInfo); accountID != "" {
-			insight.AccountID = accountID
+	return ""
+}
+
+func resolveAnyProviderAccountIDFromJWT(info accessTokenInsight) string {
+	if !info.IsJWT {
+		return ""
+	}
+	if accountID := resolveCodexAccountIDFromJWT(info); accountID != "" {
+		return accountID
+	}
+	for _, key := range []string{"account_id", "accountId", "user_id", "sub"} {
+		if accountID := extractStringClaim(info.Claims, key); accountID != "" {
+			return accountID
 		}
 	}
+	return ""
+}
+
+func looksLikeEmail(value string) bool {
+	value = strings.TrimSpace(value)
+	return strings.Contains(value, "@") && !strings.ContainsAny(value, " \t\r\n")
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 type accessTokenInsight struct {

@@ -132,11 +132,11 @@ func TestInspectPiTokenDetails(t *testing.T) {
 	raw := `{"openai-codex":{"access":"` + jwt + `","expires":` + strconv.FormatInt(expMillis, 10) + `,"accountId":"acct_from_entry"},"anthropic":{"access":"opaque-token","expires":` + strconv.FormatInt(expMillis, 10) + `}}`
 	got := inspectPi([]byte(raw))
 	joined := strings.Join(got.Details, " ")
-	if !strings.Contains(joined, "openai-codex=valid") {
-		t.Fatalf("expected openai-codex status detail, got %+v", got.Details)
+	if !strings.Contains(joined, "codex=valid") {
+		t.Fatalf("expected codex status detail, got %+v", got.Details)
 	}
-	if !strings.Contains(joined, "anthropic=valid") {
-		t.Fatalf("expected anthropic status detail, got %+v", got.Details)
+	if !strings.Contains(joined, "claude=valid") {
+		t.Fatalf("expected claude status detail, got %+v", got.Details)
 	}
 	if got.AccountEmail != "pi.person@company.com" {
 		t.Fatalf("expected account email from openai-codex access JWT, got %+v", got)
@@ -146,6 +146,143 @@ func TestInspectPiTokenDetails(t *testing.T) {
 	}
 	if got.AccountID != "acct_from_entry" {
 		t.Fatalf("expected account id from provider entry, got %+v", got)
+	}
+}
+
+func TestInspectPiInfersRoleFromTokenIssuer(t *testing.T) {
+	expMillis := time.Now().UTC().Add(time.Hour).UnixMilli()
+	codexJWT := jwtWithClaims(t, map[string]any{
+		"exp":   time.Now().UTC().Add(time.Hour).Unix(),
+		"iss":   "https://auth.openai.com",
+		"email": "codex.person@company.com",
+	})
+	claudeJWT := jwtWithClaims(t, map[string]any{
+		"exp":           time.Now().UTC().Add(time.Hour).Unix(),
+		"iss":           "https://api.anthropic.com",
+		"email_address": "claude.person@company.com",
+	})
+
+	raw := `{"provider-x":{"access":"` + codexJWT + `","expires":` + strconv.FormatInt(expMillis, 10) + `},"provider-y":{"access":"` + claudeJWT + `","expires":` + strconv.FormatInt(expMillis, 10) + `}}`
+	got := inspectPi([]byte(raw))
+	joined := strings.Join(got.Details, " ")
+	if !strings.Contains(joined, "codex=valid") {
+		t.Fatalf("expected codex role from token issuer, got %+v", got.Details)
+	}
+	if !strings.Contains(joined, "claude=valid") {
+		t.Fatalf("expected claude role from token issuer, got %+v", got.Details)
+	}
+	if got.AccountEmail != "codex.person@company.com" {
+		t.Fatalf("expected codex identity priority when available, got %+v", got)
+	}
+}
+
+func TestInspectPiClaudeIdentityFallback(t *testing.T) {
+	expMillis := time.Now().UTC().Add(time.Hour).UnixMilli()
+	claudeJWT := jwtWithClaims(t, map[string]any{
+		"exp":           time.Now().UTC().Add(time.Hour).Unix(),
+		"email_address": "claude.person@company.com",
+		"sub":           "claude-account-subject",
+		"plan":          "team",
+	})
+
+	raw := `{"anthropic":{"access":"` + claudeJWT + `","expires":` + strconv.FormatInt(expMillis, 10) + `}}`
+	got := inspectPi([]byte(raw))
+	if got.AccountEmail != "claude.person@company.com" {
+		t.Fatalf("expected claude email from JWT claims, got %+v", got)
+	}
+	if got.AccountPlan != "Team" {
+		t.Fatalf("expected normalized plan from claude token, got %+v", got)
+	}
+	if got.AccountID != "claude-account-subject" {
+		t.Fatalf("expected account id fallback to sub claim, got %+v", got)
+	}
+}
+
+func TestPIIdentityHelpers(t *testing.T) {
+	if got := choosePIIdentityCandidate(
+		piIdentityCandidate{AccountPlan: "Pro"},
+		piIdentityCandidate{AccountID: "acct_1"},
+	); got.AccountPlan != "Pro" {
+		t.Fatalf("expected first plan/id candidate fallback, got %+v", got)
+	}
+	if got := choosePIIdentityCandidate(
+		piIdentityCandidate{AccountPlan: "Pro"},
+		piIdentityCandidate{AccountEmail: "picked@company.com"},
+	); got.AccountEmail != "picked@company.com" {
+		t.Fatalf("expected email candidate priority, got %+v", got)
+	}
+	if got := choosePIIdentityCandidate(piIdentityCandidate{}, piIdentityCandidate{}); got != (piIdentityCandidate{}) {
+		t.Fatalf("expected zero candidate fallback, got %+v", got)
+	}
+
+	merged := mergePIIdentityCandidate(
+		piIdentityCandidate{AccountEmail: "keep@company.com"},
+		piIdentityCandidate{AccountEmail: "drop@company.com", AccountPlan: "Team", AccountID: "acct_1"},
+	)
+	if merged.AccountEmail != "keep@company.com" || merged.AccountPlan != "Team" || merged.AccountID != "acct_1" {
+		t.Fatalf("unexpected merged candidate: %+v", merged)
+	}
+}
+
+func TestResolveAnyProviderIdentityFromJWT(t *testing.T) {
+	if got := resolveAnyProviderEmailFromJWT(accessTokenInsight{}); got != "" {
+		t.Fatalf("expected empty email for non-jwt insight, got %q", got)
+	}
+	if got := resolveAnyProviderPlanFromJWT(accessTokenInsight{}); got != "" {
+		t.Fatalf("expected empty plan for non-jwt insight, got %q", got)
+	}
+	if got := resolveAnyProviderAccountIDFromJWT(accessTokenInsight{}); got != "" {
+		t.Fatalf("expected empty account id for non-jwt insight, got %q", got)
+	}
+
+	info := accessTokenInsight{
+		IsJWT: true,
+		Claims: map[string]any{
+			"email_address":   "claude.person@company.com",
+			"rate_limit_tier": "team",
+			"sub":             "claude-account-subject",
+		},
+	}
+	if got := resolveAnyProviderEmailFromJWT(info); got != "claude.person@company.com" {
+		t.Fatalf("expected direct email_address claim, got %q", got)
+	}
+	if got := resolveAnyProviderPlanFromJWT(info); got != "team" {
+		t.Fatalf("expected plan from rate_limit_tier, got %q", got)
+	}
+	if got := resolveAnyProviderAccountIDFromJWT(info); got != "claude-account-subject" {
+		t.Fatalf("expected account id fallback to sub claim, got %q", got)
+	}
+
+	codexID := accessTokenInsight{
+		IsJWT: true,
+		Claims: map[string]any{
+			"account_id": "acct_from_codex_claim",
+		},
+	}
+	if got := resolveAnyProviderAccountIDFromJWT(codexID); got != "acct_from_codex_claim" {
+		t.Fatalf("expected codex account_id branch, got %q", got)
+	}
+
+	nestedEmailOnly := accessTokenInsight{
+		IsJWT: true,
+		Claims: map[string]any{
+			"account": map[string]any{
+				"email": "from-nested@company.com",
+			},
+		},
+	}
+	if got := resolveAnyProviderEmailFromJWT(nestedEmailOnly); got != "from-nested@company.com" {
+		t.Fatalf("expected nested email extraction, got %q", got)
+	}
+
+	invalidEmail := accessTokenInsight{
+		IsJWT: true,
+		Claims: map[string]any{
+			"preferred_username": "not-an-email",
+		},
+	}
+	if got := resolveAnyProviderEmailFromJWT(invalidEmail); got != "" {
+		t.Fatalf("expected invalid email to be ignored, got %q", got)
 	}
 }
 

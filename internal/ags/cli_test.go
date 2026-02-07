@@ -137,6 +137,31 @@ func TestCLISavePiShowsIdentityWhenAvailable(t *testing.T) {
 	}
 }
 
+func TestCLIListPiNormalizesProviderNames(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	root := t.TempDir()
+	source := filepath.Join(root, "pi-source.json")
+
+	expMillis := strconv.FormatInt(time.Now().UTC().Add(2*time.Hour).UnixMilli(), 10)
+	writeFile(t, source, []byte(`{"openai-codex":{"access":"token-a","expires":`+expMillis+`},"anthropic":{"access":"token-b","expires":`+expMillis+`}}`))
+
+	var out bytes.Buffer
+	if err := Run([]string{"save", "pi", "work", "--source", source, "--root", root}, &out, &out); err != nil {
+		t.Fatalf("save pi: %v", err)
+	}
+
+	out.Reset()
+	if err := Run([]string{"list", "pi", "--verbose", "--root", root}, &out, &out); err != nil {
+		t.Fatalf("list pi --verbose: %v", err)
+	}
+	if strings.Contains(out.String(), "openai-codex=") {
+		t.Fatalf("did not expect raw provider name in output: %q", out.String())
+	}
+	if !strings.Contains(out.String(), "detail=codex=valid") || !strings.Contains(out.String(), "detail=claude=valid") {
+		t.Fatalf("expected normalized provider names in output, got %q", out.String())
+	}
+}
+
 func TestCLIValidationAndParseErrors(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	root := t.TempDir()
