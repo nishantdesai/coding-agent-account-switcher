@@ -29,6 +29,8 @@ func Run(args []string, stdout io.Writer, stderr io.Writer) error {
 		return runDelete(args[1:], stdout)
 	case "list":
 		return runList(args[1:], stdout)
+	case "version", "--version", "-V":
+		return runVersion(stdout)
 	case "help", "--help", "-h":
 		return runHelp(args[1:], stdout)
 	default:
@@ -44,7 +46,7 @@ func runHelp(args []string, stdout io.Writer) error {
 
 	command := strings.ToLower(args[0])
 	switch command {
-	case "save", "use", "delete", "list":
+	case "save", "use", "delete", "list", "version":
 		printCommandUsage(stdout, command)
 		return nil
 	default:
@@ -298,6 +300,11 @@ func runList(args []string, stdout io.Writer) error {
 	return nil
 }
 
+func runVersion(stdout io.Writer) error {
+	fmt.Fprintf(stdout, "ags version %s\n", Version)
+	return nil
+}
+
 func wantsHelp(args []string) bool {
 	for _, arg := range args {
 		if arg == "-h" || arg == "--help" {
@@ -454,6 +461,7 @@ COMMANDS:
   use       Activate a saved labeled snapshot for a tool.
   delete    Remove a saved labeled snapshot and its metadata.
   list      List saved snapshots with status and refresh signals.
+  version   Show CLI version.
   help      Show detailed help. Use "ags help <command>".
 
 TOOLS:
@@ -466,7 +474,6 @@ GLOBAL NOTES:
 
 QUICK START:
   ags save codex work
-  ags save claude personal
   ags use codex work
   ags list --verbose
 
@@ -475,6 +482,7 @@ DETAIL:
   ags help use
   ags help delete
   ags help list
+  ags version
 `
 }
 
@@ -555,6 +563,15 @@ EXAMPLES:
   ags list
   ags list codex
   ags list pi --verbose
+`
+	case "version":
+		return `ags version - show CLI version
+
+USAGE:
+  ags version
+
+EXAMPLES:
+  ags version
 `
 	default:
 		return rootUsageText()

@@ -410,3 +410,33 @@ func TestRunUseAndDeleteRemainingBranches(t *testing.T) {
 		t.Fatalf("expected missing snapshot branch output, got %q", out.String())
 	}
 }
+
+func TestRunVersionAndHelpTopic(t *testing.T) {
+	oldVersion := Version
+	Version = "0.1.0-test"
+	defer func() { Version = oldVersion }()
+
+	var out bytes.Buffer
+	if err := Run([]string{"version"}, &out, &out); err != nil {
+		t.Fatalf("version command: %v", err)
+	}
+	if !strings.Contains(out.String(), "ags version 0.1.0-test") {
+		t.Fatalf("unexpected version output: %q", out.String())
+	}
+
+	out.Reset()
+	if err := Run([]string{"--version"}, &out, &out); err != nil {
+		t.Fatalf("--version command: %v", err)
+	}
+	if !strings.Contains(out.String(), "ags version 0.1.0-test") {
+		t.Fatalf("unexpected --version output: %q", out.String())
+	}
+
+	out.Reset()
+	if err := Run([]string{"help", "version"}, &out, &out); err != nil {
+		t.Fatalf("help version: %v", err)
+	}
+	if !strings.Contains(out.String(), "ags version") {
+		t.Fatalf("unexpected help version output: %q", out.String())
+	}
+}
