@@ -15,8 +15,6 @@ func inspectAuth(tool Tool, raw []byte) AuthInsight {
 		return inspectCodex(raw)
 	case ToolPi:
 		return inspectPi(raw)
-	case ToolClaude:
-		return inspectClaude(raw)
 	default:
 		return AuthInsight{
 			Status:       "unknown",
@@ -51,6 +49,26 @@ func inspectCodex(raw []byte) AuthInsight {
 		return insight
 	}
 
+	insight.AccountID = extractStringClaim(tokens, "account_id")
+
+	idToken := extractStringClaim(tokens, "id_token")
+	if idToken != "" {
+		idInfo := inspectAccessToken(idToken)
+		if idInfo.IsJWT {
+			if email := resolveCodexEmailFromJWT(idInfo); email != "" {
+				insight.AccountEmail = email
+			}
+			if plan := resolveCodexPlanFromJWT(idInfo); plan != "" {
+				insight.AccountPlan = normalizePlan(plan)
+			}
+			if insight.AccountID == "" {
+				if jwtAccountID := resolveCodexAccountIDFromJWT(idInfo); jwtAccountID != "" {
+					insight.AccountID = jwtAccountID
+				}
+			}
+		}
+	}
+
 	accessToken, ok := tokens["access_token"].(string)
 	if !ok || accessToken == "" {
 		insight.Details = append(insight.Details, "access_token missing")
@@ -58,14 +76,8 @@ func inspectCodex(raw []byte) AuthInsight {
 	}
 
 	tokenInfo := inspectAccessToken(accessToken)
-	if tokenInfo.IsJWT {
-		insight.Details = append(insight.Details, describeJWTToken("access_token", tokenInfo))
-	} else {
-		insight.Details = append(insight.Details, "access_token format=opaque (not JWT)")
-	}
-
 	if !tokenInfo.HasExp {
-		insight.Details = append(insight.Details, "could not parse JWT exp from access_token")
+		insight.Details = append(insight.Details, "could not parse access_token exp")
 		return insight
 	}
 
@@ -92,21 +104,11 @@ func inspectPi(raw []byte) AuthInsight {
 		expiresAt time.Time
 	}
 	statuses := []providerStatus{}
-	tokenDetails := []string{}
 
 	for key, value := range payload {
 		entry, ok := value.(map[string]any)
 		if !ok {
 			continue
-		}
-
-		if accessToken, ok := entry["access"].(string); ok && strings.TrimSpace(accessToken) != "" {
-			tokenInfo := inspectAccessToken(accessToken)
-			if tokenInfo.IsJWT {
-				tokenDetails = append(tokenDetails, describeJWTToken(key+".access", tokenInfo))
-			} else {
-				tokenDetails = append(tokenDetails, fmt.Sprintf("%s.access format=opaque (not JWT)", key))
-			}
 		}
 
 		expRaw, ok := entry["expires"]
@@ -125,14 +127,11 @@ func inspectPi(raw []byte) AuthInsight {
 		})
 	}
 
-	sort.Strings(tokenDetails)
 	if len(statuses) == 0 {
-		details := []string{"no provider expires fields found"}
-		details = append(details, tokenDetails...)
 		return AuthInsight{
 			Status:       "unknown",
 			NeedsRefresh: "unknown",
-			Details:      details,
+			Details:      []string{"no provider expires fields found"},
 		}
 	}
 
@@ -141,11 +140,10 @@ func inspectPi(raw []byte) AuthInsight {
 	})
 	worst := statuses[0]
 
-	details := make([]string, 0, len(statuses)+len(tokenDetails))
+	details := make([]string, 0, len(statuses))
 	for _, s := range statuses {
 		details = append(details, fmt.Sprintf("%s=%s (%s)", s.name, s.status, s.expiresAt.Format(time.RFC3339)))
 	}
-	details = append(details, tokenDetails...)
 
 	return AuthInsight{
 		Status:       worst.status,
@@ -155,38 +153,18 @@ func inspectPi(raw []byte) AuthInsight {
 	}
 }
 
-func inspectClaude(raw []byte) AuthInsight {
-	var payload map[string]any
-	if err := json.Unmarshal(raw, &payload); err != nil {
-		return AuthInsight{
-			Status:       "unknown",
-			NeedsRefresh: "unknown",
-			Details:      []string{"invalid JSON"},
-		}
-	}
-
-	_, hasOAuthAccount := payload["oauthAccount"]
-	if hasOAuthAccount {
-		return AuthInsight{
-			Status:       "unknown",
-			NeedsRefresh: "unknown",
-			Details:      []string{"oauthAccount present, but token expiry is not available in this file format"},
-		}
-	}
-
-	return AuthInsight{
-		Status:       "unknown",
-		NeedsRefresh: "unknown",
-		Details:      []string{"no known expiry fields found"},
-	}
-}
-
 type accessTokenInsight struct {
 	IsJWT     bool
 	HeaderAlg string
 	ClaimKeys []string
+	Claims    map[string]any
 	HasExp    bool
 	ExpiresAt time.Time
+	HasIat    bool
+	IssuedAt  time.Time
+	Issuer    string
+	Subject   string
+	Audience  string
 }
 
 func inspectAccessToken(token string) accessTokenInsight {
@@ -213,7 +191,7 @@ func inspectAccessToken(token string) accessTokenInsight {
 		return accessTokenInsight{}
 	}
 
-	info := accessTokenInsight{IsJWT: true}
+	info := accessTokenInsight{IsJWT: true, Claims: claims}
 	if alg, ok := header["alg"].(string); ok && strings.TrimSpace(alg) != "" {
 		info.HeaderAlg = alg
 	}
@@ -231,18 +209,186 @@ func inspectAccessToken(token string) accessTokenInsight {
 			info.ExpiresAt = time.Unix(int64(exp), 0).UTC()
 		}
 	}
+	if iatRaw, ok := claims["iat"]; ok {
+		if iat, ok := numberToFloat(iatRaw); ok {
+			info.HasIat = true
+			info.IssuedAt = time.Unix(int64(iat), 0).UTC()
+		}
+	}
+
+	info.Issuer = extractStringClaim(claims, "iss")
+	info.Subject = extractStringClaim(claims, "sub")
+	info.Audience = extractAudienceClaim(claims)
+
 	return info
 }
 
+func resolveCodexEmailFromJWT(info accessTokenInsight) string {
+	if !info.IsJWT {
+		return ""
+	}
+	if email := extractStringClaim(info.Claims, "email"); email != "" {
+		return email
+	}
+	if profile, ok := info.Claims["https://api.openai.com/profile"].(map[string]any); ok {
+		if email := extractStringClaim(profile, "email"); email != "" {
+			return email
+		}
+	}
+	if profile, ok := info.Claims["profile"].(map[string]any); ok {
+		if email := extractStringClaim(profile, "email"); email != "" {
+			return email
+		}
+	}
+	return ""
+}
+
+func resolveCodexPlanFromJWT(info accessTokenInsight) string {
+	if !info.IsJWT {
+		return ""
+	}
+	if auth, ok := info.Claims["https://api.openai.com/auth"].(map[string]any); ok {
+		if plan := extractStringClaim(auth, "chatgpt_plan_type"); plan != "" {
+			return plan
+		}
+		if plan := extractStringClaim(auth, "plan"); plan != "" {
+			return plan
+		}
+	}
+	if auth, ok := info.Claims["auth"].(map[string]any); ok {
+		if plan := extractStringClaim(auth, "chatgpt_plan_type"); plan != "" {
+			return plan
+		}
+		if plan := extractStringClaim(auth, "plan"); plan != "" {
+			return plan
+		}
+	}
+	if plan := extractStringClaim(info.Claims, "chatgpt_plan_type"); plan != "" {
+		return plan
+	}
+	if plan := extractStringClaim(info.Claims, "plan"); plan != "" {
+		return plan
+	}
+	return ""
+}
+
+func resolveCodexAccountIDFromJWT(info accessTokenInsight) string {
+	if !info.IsJWT {
+		return ""
+	}
+	if auth, ok := info.Claims["https://api.openai.com/auth"].(map[string]any); ok {
+		if accountID := extractStringClaim(auth, "account_id"); accountID != "" {
+			return accountID
+		}
+		if accountID := extractStringClaim(auth, "accountId"); accountID != "" {
+			return accountID
+		}
+		if accountID := extractStringClaim(auth, "chatgpt_account_id"); accountID != "" {
+			return accountID
+		}
+	}
+	if accountID := extractStringClaim(info.Claims, "account_id"); accountID != "" {
+		return accountID
+	}
+	if accountID := extractStringClaim(info.Claims, "accountId"); accountID != "" {
+		return accountID
+	}
+	return ""
+}
+
+func normalizePlan(plan string) string {
+	cleaned := strings.TrimSpace(strings.ToLower(plan))
+	switch cleaned {
+	case "plus", "chatgpt_plus":
+		return "Plus"
+	case "pro", "chatgpt_pro":
+		return "Pro"
+	case "team", "chatgpt_team":
+		return "Team"
+	case "enterprise", "chatgpt_enterprise":
+		return "Enterprise"
+	case "free", "chatgpt_free":
+		return "Free"
+	default:
+		if cleaned == "" {
+			return ""
+		}
+		return strings.ToUpper(cleaned[:1]) + cleaned[1:]
+	}
+}
+
+func extractStringClaim(claims map[string]any, key string) string {
+	v, ok := claims[key].(string)
+	if !ok {
+		return ""
+	}
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return ""
+	}
+	return v
+}
+
+func extractAudienceClaim(claims map[string]any) string {
+	v, ok := claims["aud"]
+	if !ok {
+		return ""
+	}
+	switch aud := v.(type) {
+	case string:
+		aud = strings.TrimSpace(aud)
+		if aud == "" {
+			return ""
+		}
+		return aud
+	case []any:
+		values := make([]string, 0, len(aud))
+		for _, item := range aud {
+			s, ok := item.(string)
+			if !ok {
+				continue
+			}
+			s = strings.TrimSpace(s)
+			if s == "" {
+				continue
+			}
+			values = append(values, s)
+		}
+		if len(values) == 0 {
+			return ""
+		}
+		return strings.Join(values, ",")
+	default:
+		return ""
+	}
+}
+
 func describeJWTToken(tokenName string, info accessTokenInsight) string {
+	parts := []string{fmt.Sprintf("%s format=jwt", tokenName)}
+	if info.HeaderAlg != "" {
+		parts = append(parts, fmt.Sprintf("alg=%s", info.HeaderAlg))
+	}
+	if info.HasExp {
+		parts = append(parts, fmt.Sprintf("exp=%s", info.ExpiresAt.Format(time.RFC3339)))
+	}
+	if info.HasIat {
+		parts = append(parts, fmt.Sprintf("iat=%s", info.IssuedAt.Format(time.RFC3339)))
+	}
+	if info.Issuer != "" {
+		parts = append(parts, fmt.Sprintf("iss=%s", info.Issuer))
+	}
+	if info.Subject != "" {
+		parts = append(parts, fmt.Sprintf("sub=%s", info.Subject))
+	}
+	if info.Audience != "" {
+		parts = append(parts, fmt.Sprintf("aud=%s", info.Audience))
+	}
 	claims := "-"
 	if len(info.ClaimKeys) > 0 {
 		claims = strings.Join(info.ClaimKeys, ",")
 	}
-	if info.HeaderAlg == "" {
-		return fmt.Sprintf("%s format=jwt claims=%s", tokenName, claims)
-	}
-	return fmt.Sprintf("%s format=jwt alg=%s claims=%s", tokenName, info.HeaderAlg, claims)
+	parts = append(parts, fmt.Sprintf("claims=%s", claims))
+	return strings.Join(parts, " ")
 }
 
 func extractJWTExpiry(token string) (time.Time, bool) {

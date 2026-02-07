@@ -6,7 +6,7 @@ import (
 )
 
 func TestParseToolAndString(t *testing.T) {
-	for _, tool := range []Tool{ToolCodex, ToolClaude, ToolPi} {
+	for _, tool := range []Tool{ToolCodex, ToolPi} {
 		parsed, ok := ParseTool(tool.String())
 		if !ok || parsed != tool {
 			t.Fatalf("expected parse success for %q", tool)

@@ -66,7 +66,7 @@ func runSave(args []string, stdout io.Writer) error {
 	}
 	tool, ok := ParseTool(strings.ToLower(args[0]))
 	if !ok {
-		return fmt.Errorf("invalid tool %q. expected one of: codex, claude, pi", args[0])
+		return fmt.Errorf("invalid tool %q. expected one of: codex, pi", args[0])
 	}
 
 	positionalLabel, parseArgs := splitPositionalLabel(args)
@@ -78,6 +78,7 @@ func runSave(args []string, stdout io.Writer) error {
 	labelShort := fs.String("l", "", "Profile label name, e.g. work")
 	source := fs.String("source", "", "Override source auth path for this save")
 	root := fs.String("root", defaultRootDir(), "AGS data root directory")
+	verbose := fs.Bool("verbose", false, "Print additional detail lines")
 
 	if err := fs.Parse(parseArgs); err != nil {
 		return err
@@ -103,15 +104,23 @@ func runSave(args []string, stdout io.Writer) error {
 		return err
 	}
 
-	fmt.Fprintf(stdout, "Saved %s label=%s\n", result.Tool, result.Label)
-	fmt.Fprintf(stdout, "- source: %s\n", result.SourcePath)
-	fmt.Fprintf(stdout, "- snapshot: %s\n", result.SnapshotPath)
-	if result.ChangedSinceLastSave {
-		fmt.Fprintln(stdout, "- change: changed since last save (new auth snapshot)")
+	identity := formatIdentity(result.Insight)
+	if identity != "" {
+		fmt.Fprintf(stdout, "Saved %s for %s\n", identity, result.Label)
 	} else {
-		fmt.Fprintln(stdout, "- change: unchanged since last save")
+		fmt.Fprintf(stdout, "Saved %s for %s\n", result.Tool, result.Label)
 	}
-	printInsight(stdout, result.Insight)
+
+	if *verbose {
+		fmt.Fprintf(stdout, "- source: %s\n", result.SourcePath)
+		fmt.Fprintf(stdout, "- snapshot: %s\n", result.SnapshotPath)
+		if result.ChangedSinceLastSave {
+			fmt.Fprintln(stdout, "- change: changed since last save (new auth snapshot)")
+		} else {
+			fmt.Fprintln(stdout, "- change: unchanged since last save")
+		}
+		printInsight(stdout, result.Insight, true)
+	}
 	return nil
 }
 
@@ -125,7 +134,7 @@ func runUse(args []string, stdout io.Writer) error {
 	}
 	tool, ok := ParseTool(strings.ToLower(args[0]))
 	if !ok {
-		return fmt.Errorf("invalid tool %q. expected one of: codex, claude, pi", args[0])
+		return fmt.Errorf("invalid tool %q. expected one of: codex, pi", args[0])
 	}
 
 	positionalLabel, parseArgs := splitPositionalLabel(args)
@@ -137,6 +146,7 @@ func runUse(args []string, stdout io.Writer) error {
 	labelShort := fs.String("l", "", "Profile label name, e.g. work")
 	target := fs.String("target", "", "Override runtime target path for this use")
 	root := fs.String("root", defaultRootDir(), "AGS data root directory")
+	verbose := fs.Bool("verbose", false, "Print additional detail lines")
 
 	if err := fs.Parse(parseArgs); err != nil {
 		return err
@@ -162,10 +172,18 @@ func runUse(args []string, stdout io.Writer) error {
 		return err
 	}
 
-	fmt.Fprintf(stdout, "Using %s label=%s\n", result.Tool, result.Label)
-	fmt.Fprintf(stdout, "- target: %s\n", result.TargetPath)
-	fmt.Fprintf(stdout, "- refresh signal: %s\n", result.ChangeSinceLastUse)
-	printInsight(stdout, result.Insight)
+	identity := formatIdentity(result.Insight)
+	if identity != "" {
+		fmt.Fprintf(stdout, "Using %s for %s\n", identity, result.Label)
+	} else {
+		fmt.Fprintf(stdout, "Using %s for %s\n", result.Tool, result.Label)
+	}
+
+	if *verbose {
+		fmt.Fprintf(stdout, "- target: %s\n", result.TargetPath)
+		fmt.Fprintf(stdout, "- refresh signal: %s\n", result.ChangeSinceLastUse)
+		printInsight(stdout, result.Insight, true)
+	}
 	return nil
 }
 
@@ -179,7 +197,7 @@ func runDelete(args []string, stdout io.Writer) error {
 	}
 	tool, ok := ParseTool(strings.ToLower(args[0]))
 	if !ok {
-		return fmt.Errorf("invalid tool %q. expected one of: codex, claude, pi", args[0])
+		return fmt.Errorf("invalid tool %q. expected one of: codex, pi", args[0])
 	}
 
 	positionalLabel, parseArgs := splitPositionalLabel(args)
@@ -238,7 +256,7 @@ func runList(args []string, stdout io.Writer) error {
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
 		tool, ok := ParseTool(strings.ToLower(args[0]))
 		if !ok {
-			return fmt.Errorf("invalid tool %q. expected one of: codex, claude, pi", args[0])
+			return fmt.Errorf("invalid tool %q. expected one of: codex, pi", args[0])
 		}
 		toolFilter = &tool
 		flagArgs = args[1:]
@@ -319,7 +337,7 @@ func runActive(args []string, stdout io.Writer) error {
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
 		tool, ok := ParseTool(strings.ToLower(args[0]))
 		if !ok {
-			return fmt.Errorf("invalid tool %q. expected one of: codex, claude, pi", args[0])
+			return fmt.Errorf("invalid tool %q. expected one of: codex, pi", args[0])
 		}
 		toolFilter = &tool
 		flagArgs = args[1:]
@@ -419,7 +437,7 @@ func orDash(s string) string {
 	return s
 }
 
-func printInsight(out io.Writer, insight AuthInsight) {
+func printInsight(out io.Writer, insight AuthInsight, verbose bool) {
 	fmt.Fprintf(out, "- status: %s\n", orDash(insight.Status))
 	fmt.Fprintf(out, "- needs refresh: %s\n", orDash(insight.NeedsRefresh))
 	if insight.ExpiresAt != "" {
@@ -428,9 +446,27 @@ func printInsight(out io.Writer, insight AuthInsight) {
 	if insight.LastRefresh != "" {
 		fmt.Fprintf(out, "- last refresh: %s\n", formatHumanTime(insight.LastRefresh))
 	}
+	if !verbose {
+		return
+	}
+	if insight.AccountID != "" {
+		fmt.Fprintf(out, "- account id: %s\n", insight.AccountID)
+	}
 	for _, detail := range insight.Details {
 		fmt.Fprintf(out, "- detail: %s\n", detail)
 	}
+}
+
+func formatIdentity(insight AuthInsight) string {
+	email := strings.TrimSpace(insight.AccountEmail)
+	plan := strings.TrimSpace(insight.AccountPlan)
+	if email == "" {
+		return ""
+	}
+	if plan == "" {
+		return email
+	}
+	return fmt.Sprintf("%s (%s)", email, plan)
 }
 
 func formatHumanTime(raw string) string {
@@ -521,7 +557,7 @@ COMMANDS:
   help      Show detailed help. Use "ags help <command>".
 
 TOOLS:
-  codex, claude, pi
+  codex, pi
 
 GLOBAL NOTES:
   - Labels must match [a-zA-Z0-9._-]+.
@@ -557,10 +593,11 @@ FLAGS:
   --label, -l <name> Required profile label (example: work, personal)
   --source <path>   Optional override source auth file path
   --root <path>     Optional AGS data root (default: ~/.config/ags)
+  --verbose         Show additional detail lines
 
 EXAMPLES:
   ags save codex work
-  ags save claude personal
+  ags save pi personal
   ags save pi --label work --source ~/.pi/agent/auth.json
 `
 	case "use":
@@ -574,6 +611,7 @@ FLAGS:
   --label, -l <name> Required profile label to activate
   --target <path>   Optional override runtime auth destination
   --root <path>     Optional AGS data root (default: ~/.config/ags)
+  --verbose         Show additional detail lines
 
 BEHAVIOR:
   - Writes the saved snapshot into the tool runtime auth path.

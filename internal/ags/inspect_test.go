@@ -31,10 +31,6 @@ func TestInspectAuthDispatch(t *testing.T) {
 		t.Fatalf("expected pi dispatch")
 	}
 
-	if got := inspectAuth(ToolClaude, []byte(`{"oauthAccount":{}}`)); len(got.Details) == 0 {
-		t.Fatalf("expected claude dispatch")
-	}
-
 	got := inspectAuth(Tool("unknown"), []byte(`{}`))
 	if got.Status != "unknown" || got.NeedsRefresh != "unknown" {
 		t.Fatalf("unexpected fallback insight: %+v", got)
@@ -56,7 +52,7 @@ func TestInspectCodexBranches(t *testing.T) {
 
 	got := inspectCodex([]byte(`{"tokens":{"access_token":"bad"}}`))
 	joined := strings.Join(got.Details, " ")
-	if !strings.Contains(joined, "format=opaque") || !strings.Contains(joined, "could not parse JWT exp") {
+	if !strings.Contains(joined, "could not parse access_token exp") {
 		t.Fatalf("bad token branch not hit: %+v", got)
 	}
 
@@ -68,9 +64,6 @@ func TestInspectCodexBranches(t *testing.T) {
 	}
 	if got.LastRefresh != "2026-01-01T00:00:00Z" {
 		t.Fatalf("expected last refresh from payload, got %+v", got)
-	}
-	if !strings.Contains(strings.Join(got.Details, " "), "access_token format=jwt") {
-		t.Fatalf("expected jwt detail line, got %+v", got.Details)
 	}
 
 	expSoon := time.Now().UTC().Add(5 * time.Minute).Unix()
@@ -89,8 +82,8 @@ func TestInspectCodexBranches(t *testing.T) {
 	jwtNoExpClaims := base64.RawURLEncoding.EncodeToString([]byte(`{"sub":"u1"}`))
 	jwtNoExp := jwtNoExpHeader + "." + jwtNoExpClaims + ".sig"
 	got = inspectCodex([]byte(`{"tokens":{"access_token":"` + jwtNoExp + `"}}`))
-	if !strings.Contains(strings.Join(got.Details, " "), "format=jwt") || !strings.Contains(strings.Join(got.Details, " "), "could not parse JWT exp") {
-		t.Fatalf("expected jwt-without-exp detail branch, got %+v", got)
+	if !strings.Contains(strings.Join(got.Details, " "), "could not parse access_token exp") {
+		t.Fatalf("expected jwt-without-exp parse failure detail branch, got %+v", got)
 	}
 }
 
@@ -105,7 +98,7 @@ func TestInspectPiBranches(t *testing.T) {
 
 	validMillis := time.Now().UTC().Add(2 * time.Hour).UnixMilli()
 	expiredMillis := time.Now().UTC().Add(-2 * time.Hour).UnixMilli()
-	raw := `{"claude":{"expires":` + strconv.FormatInt(validMillis, 10) + `},"codex":{"expires":` + strconv.FormatInt(expiredMillis, 10) + `}}`
+	raw := `{"provider_a":{"expires":` + strconv.FormatInt(validMillis, 10) + `},"provider_b":{"expires":` + strconv.FormatInt(expiredMillis, 10) + `}}`
 	got := inspectPi([]byte(raw))
 	if got.Status != "expired" || got.NeedsRefresh != "yes" {
 		t.Fatalf("expected worst provider status to be expired: %+v", got)
@@ -114,7 +107,7 @@ func TestInspectPiBranches(t *testing.T) {
 		t.Fatalf("expected two provider details: %+v", got)
 	}
 	joined := strings.Join(got.Details, " ")
-	if !strings.Contains(joined, "codex=expired") || !strings.Contains(joined, "claude=valid") {
+	if !strings.Contains(joined, "provider_b=expired") || !strings.Contains(joined, "provider_a=valid") {
 		t.Fatalf("unexpected details: %+v", got.Details)
 	}
 }
@@ -125,27 +118,11 @@ func TestInspectPiTokenDetails(t *testing.T) {
 	raw := `{"openai-codex":{"access":"` + jwt + `","expires":` + strconv.FormatInt(expMillis, 10) + `},"anthropic":{"access":"opaque-token","expires":` + strconv.FormatInt(expMillis, 10) + `}}`
 	got := inspectPi([]byte(raw))
 	joined := strings.Join(got.Details, " ")
-	if !strings.Contains(joined, "openai-codex.access format=jwt") {
-		t.Fatalf("expected jwt provider token detail, got %+v", got.Details)
+	if !strings.Contains(joined, "openai-codex=valid") {
+		t.Fatalf("expected openai-codex status detail, got %+v", got.Details)
 	}
-	if !strings.Contains(joined, "anthropic.access format=opaque") {
-		t.Fatalf("expected opaque provider token detail, got %+v", got.Details)
-	}
-}
-
-func TestInspectClaudeBranches(t *testing.T) {
-	if got := inspectClaude([]byte("not-json")); len(got.Details) == 0 || got.Details[0] != "invalid JSON" {
-		t.Fatalf("invalid json branch not hit: %+v", got)
-	}
-
-	got := inspectClaude([]byte(`{"oauthAccount":{}}`))
-	if len(got.Details) == 0 || !strings.Contains(got.Details[0], "oauthAccount present") {
-		t.Fatalf("oauthAccount branch not hit: %+v", got)
-	}
-
-	got = inspectClaude([]byte(`{"x":1}`))
-	if len(got.Details) == 0 || got.Details[0] != "no known expiry fields found" {
-		t.Fatalf("default branch not hit: %+v", got)
+	if !strings.Contains(joined, "anthropic=valid") {
+		t.Fatalf("expected anthropic status detail, got %+v", got.Details)
 	}
 }
 

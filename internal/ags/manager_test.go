@@ -10,16 +10,52 @@ import (
 	"time"
 )
 
-func makeCodexAuthJSON(t *testing.T, exp time.Time) []byte {
+func makeJWT(t *testing.T, claims map[string]any) string {
 	t.Helper()
 	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"none"}`))
-	claimsBytes, err := json.Marshal(map[string]any{"exp": exp.Unix()})
+	claimsBytes, err := json.Marshal(claims)
 	if err != nil {
 		t.Fatalf("marshal claims: %v", err)
 	}
-	claims := base64.RawURLEncoding.EncodeToString(claimsBytes)
-	token := header + "." + claims + ".sig"
+	claimsPart := base64.RawURLEncoding.EncodeToString(claimsBytes)
+	return header + "." + claimsPart + ".sig"
+}
+
+func makeCodexAuthJSON(t *testing.T, exp time.Time) []byte {
+	t.Helper()
+	token := makeJWT(t, map[string]any{"exp": exp.Unix()})
 	return []byte(`{"tokens":{"access_token":"` + token + `"}}`)
+}
+
+func makeCodexAuthJSONWithIdentity(t *testing.T, exp time.Time, accountID string, email string, plan string) []byte {
+	t.Helper()
+	accessToken := makeJWT(t, map[string]any{"exp": exp.Unix()})
+	idClaims := map[string]any{}
+	if strings.TrimSpace(email) != "" {
+		idClaims["email"] = email
+	}
+	if strings.TrimSpace(plan) != "" {
+		idClaims["auth"] = map[string]any{"chatgpt_plan_type": plan}
+	}
+	if strings.TrimSpace(accountID) != "" {
+		idClaims["account_id"] = accountID
+	}
+	idToken := makeJWT(t, idClaims)
+
+	payload := map[string]any{
+		"tokens": map[string]any{
+			"access_token": accessToken,
+			"id_token":     idToken,
+		},
+	}
+	if strings.TrimSpace(accountID) != "" {
+		payload["tokens"].(map[string]any)["account_id"] = accountID
+	}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal codex auth payload: %v", err)
+	}
+	return raw
 }
 
 func writeFile(t *testing.T, path string, raw []byte) {
@@ -151,6 +187,60 @@ func TestManagerSaveUseDeleteAndListFlow(t *testing.T) {
 	}
 }
 
+func TestManagerCachesIdentityByAccountID(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	root := t.TempDir()
+
+	m, err := NewManager(root)
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+
+	accountID := "acct_123"
+	sourceWithEmail := filepath.Join(t.TempDir(), "source-with-email.json")
+	writeFile(t, sourceWithEmail, makeCodexAuthJSONWithIdentity(t, time.Now().Add(2*time.Hour), accountID, "person@company.com", "plus"))
+
+	savedWithEmail, err := m.Save(ToolCodex, "work", sourceWithEmail)
+	if err != nil {
+		t.Fatalf("save with email: %v", err)
+	}
+	if savedWithEmail.Insight.AccountEmail != "person@company.com" || savedWithEmail.Insight.AccountPlan != "Plus" {
+		t.Fatalf("expected identity in first save, got %+v", savedWithEmail.Insight)
+	}
+
+	state, err := m.loadState()
+	if err != nil {
+		t.Fatalf("loadState after first save: %v", err)
+	}
+	cacheItem, ok := state.IdentityCache[accountID]
+	if !ok || cacheItem.Email != "person@company.com" || cacheItem.Plan != "Plus" {
+		t.Fatalf("expected identity cache entry, got %+v", state.IdentityCache)
+	}
+
+	sourceWithoutEmail := filepath.Join(t.TempDir(), "source-without-email.json")
+	writeFile(t, sourceWithoutEmail, makeCodexAuthJSONWithIdentity(t, time.Now().Add(3*time.Hour), accountID, "", ""))
+
+	savedWithoutEmail, err := m.Save(ToolCodex, "personal", sourceWithoutEmail)
+	if err != nil {
+		t.Fatalf("save without email: %v", err)
+	}
+	if savedWithoutEmail.Insight.AccountEmail != "person@company.com" {
+		t.Fatalf("expected cached email fallback, got %+v", savedWithoutEmail.Insight)
+	}
+	if savedWithoutEmail.Insight.AccountPlan != "Plus" {
+		t.Fatalf("expected cached plan fallback, got %+v", savedWithoutEmail.Insight)
+	}
+
+	target := filepath.Join(t.TempDir(), "target.json")
+	usedWithoutEmail, err := m.Use(ToolCodex, "personal", target)
+	if err != nil {
+		t.Fatalf("use without email: %v", err)
+	}
+	if usedWithoutEmail.Insight.AccountEmail != "person@company.com" || usedWithoutEmail.Insight.AccountPlan != "Plus" {
+		t.Fatalf("expected cached identity on use, got %+v", usedWithoutEmail.Insight)
+	}
+}
 func TestManagerErrorBranches(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -811,8 +901,8 @@ func TestManagerActive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Active no profiles: %v", err)
 	}
-	if len(items) != 3 {
-		t.Fatalf("expected 3 tools, got %+v", items)
+	if len(items) != 2 {
+		t.Fatalf("expected 2 tools, got %+v", items)
 	}
 
 	codexSrc := filepath.Join(t.TempDir(), "codex.json")

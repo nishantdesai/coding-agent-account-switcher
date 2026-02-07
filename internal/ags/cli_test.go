@@ -73,7 +73,7 @@ func TestCLIEndToEndSaveUseListDelete(t *testing.T) {
 	if err := Run([]string{"save", "codex", "work", "--source", source, "--root", root}, &out, &out); err != nil {
 		t.Fatalf("save: %v", err)
 	}
-	if !strings.Contains(out.String(), "Saved codex label=work") {
+	if !strings.Contains(out.String(), "Saved codex for work") {
 		t.Fatalf("unexpected save output: %q", out.String())
 	}
 
@@ -81,7 +81,7 @@ func TestCLIEndToEndSaveUseListDelete(t *testing.T) {
 	if err := Run([]string{"use", "codex", "work", "--target", target, "--root", root}, &out, &out); err != nil {
 		t.Fatalf("use: %v", err)
 	}
-	if !strings.Contains(out.String(), "Using codex label=work") {
+	if !strings.Contains(out.String(), "Using codex for work") {
 		t.Fatalf("unexpected use output: %q", out.String())
 	}
 
@@ -181,6 +181,12 @@ func TestCLIHelperFunctions(t *testing.T) {
 	if orDash("") != "-" || orDash("x") != "x" {
 		t.Fatalf("unexpected orDash behavior")
 	}
+	if got := formatIdentity(AuthInsight{AccountEmail: "xyz.com", AccountPlan: "Plus"}); got != "xyz.com (Plus)" {
+		t.Fatalf("expected identity to be shown, got %q", got)
+	}
+	if got := formatIdentity(AuthInsight{AccountEmail: "real.person@company.com", AccountPlan: "Plus"}); got != "real.person@company.com (Plus)" {
+		t.Fatalf("unexpected formatted identity: %q", got)
+	}
 }
 
 func TestCLITimeFormattingHelpers(t *testing.T) {
@@ -246,13 +252,13 @@ func TestCLIPrintFunctionsAndUsageText(t *testing.T) {
 	}
 
 	out.Reset()
-	printInsight(&out, AuthInsight{Status: "valid", NeedsRefresh: "no", ExpiresAt: time.Now().UTC().Add(time.Hour).Format(time.RFC3339), LastRefresh: time.Now().UTC().Format(time.RFC3339), Details: []string{"d1"}})
+	printInsight(&out, AuthInsight{Status: "valid", NeedsRefresh: "no", ExpiresAt: time.Now().UTC().Add(time.Hour).Format(time.RFC3339), LastRefresh: time.Now().UTC().Format(time.RFC3339), Details: []string{"d1"}}, true)
 	if !strings.Contains(out.String(), "status") || !strings.Contains(out.String(), "detail: d1") {
 		t.Fatalf("unexpected insight output: %q", out.String())
 	}
 
 	out.Reset()
-	printInsight(&out, AuthInsight{})
+	printInsight(&out, AuthInsight{}, true)
 	if !strings.Contains(out.String(), "status") {
 		t.Fatalf("expected status line for empty insight")
 	}
@@ -337,8 +343,8 @@ func TestRunSaveRunUseRunDeleteErrorBranches(t *testing.T) {
 	if err := runSave([]string{"codex", "work", "--source", source, "--root", root}, &out); err != nil {
 		t.Fatalf("runSave second save: %v", err)
 	}
-	if !strings.Contains(out.String(), "unchanged since last save") {
-		t.Fatalf("expected unchanged branch output, got %q", out.String())
+	if !strings.Contains(out.String(), "Saved codex for work") {
+		t.Fatalf("expected save output, got %q", out.String())
 	}
 }
 

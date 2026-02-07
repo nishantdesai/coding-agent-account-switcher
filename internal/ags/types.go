@@ -5,9 +5,8 @@ import "time"
 type Tool string
 
 const (
-	ToolCodex  Tool = "codex"
-	ToolClaude Tool = "claude"
-	ToolPi     Tool = "pi"
+	ToolCodex Tool = "codex"
+	ToolPi    Tool = "pi"
 )
 
 func (t Tool) String() string {
@@ -16,7 +15,7 @@ func (t Tool) String() string {
 
 func ParseTool(value string) (Tool, bool) {
 	switch Tool(value) {
-	case ToolCodex, ToolClaude, ToolPi:
+	case ToolCodex, ToolPi:
 		return Tool(value), true
 	default:
 		return "", false
@@ -28,6 +27,9 @@ type AuthInsight struct {
 	ExpiresAt    string
 	LastRefresh  string
 	NeedsRefresh string
+	AccountEmail string
+	AccountPlan  string
+	AccountID    string
 	Details      []string
 }
 
@@ -73,8 +75,9 @@ type ActiveItem struct {
 }
 
 type State struct {
-	Version int                   `json:"version"`
-	Entries map[string]StateEntry `json:"entries"`
+	Version       int                          `json:"version"`
+	Entries       map[string]StateEntry        `json:"entries"`
+	IdentityCache map[string]IdentityCacheItem `json:"identity_cache,omitempty"`
 }
 
 type StateEntry struct {
@@ -86,6 +89,12 @@ type StateEntry struct {
 	SavedAt      string `json:"saved_at"`
 	LastUsedAt   string `json:"last_used_at,omitempty"`
 	LastUsedSHA  string `json:"last_used_sha256,omitempty"`
+}
+
+type IdentityCacheItem struct {
+	Email     string `json:"email"`
+	Plan      string `json:"plan,omitempty"`
+	UpdatedAt string `json:"updated_at"`
 }
 
 type Manager struct {
@@ -100,8 +109,9 @@ type ToolPaths struct {
 
 func defaultState() State {
 	return State{
-		Version: 1,
-		Entries: map[string]StateEntry{},
+		Version:       1,
+		Entries:       map[string]StateEntry{},
+		IdentityCache: map[string]IdentityCacheItem{},
 	}
 }
 

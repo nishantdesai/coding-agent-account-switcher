@@ -42,15 +42,6 @@ func NewManager(rootDir string) (*Manager, error) {
 				filepath.Join(home, ".pi", "agent", "auth.json"),
 			},
 		},
-		ToolClaude: {
-			DefaultRuntime: filepath.Join(home, ".claude.json"),
-			SaveCandidates: []string{
-				filepath.Join(home, ".claude.json"),
-				filepath.Join(home, ".claude", "auth.json"),
-				filepath.Join(home, ".config", "claude", "auth.json"),
-				filepath.Join(home, ".claude.json.backup"),
-			},
-		},
 	}
 
 	return &Manager{
@@ -87,6 +78,10 @@ func (m *Manager) Save(tool Tool, label string, sourceOverride string) (*SaveRes
 	prev, hadPrev := state.Entries[key]
 	changed := !hadPrev || prev.SHA256 != hash
 
+	insight := inspectAuth(tool, raw)
+	hydrateIdentityFromCache(&insight, state)
+	rememberIdentity(&state, insight)
+
 	state.Entries[key] = StateEntry{
 		Tool:         tool.String(),
 		Label:        label,
@@ -102,7 +97,6 @@ func (m *Manager) Save(tool Tool, label string, sourceOverride string) (*SaveRes
 		return nil, err
 	}
 
-	insight := inspectAuth(tool, raw)
 	return &SaveResult{
 		Tool:                 tool,
 		Label:                label,
@@ -164,6 +158,10 @@ func (m *Manager) Use(tool Tool, label string, targetOverride string) (*UseResul
 		}
 	}
 
+	insight := inspectAuth(tool, rawToWrite)
+	hydrateIdentityFromCache(&insight, state)
+	rememberIdentity(&state, insight)
+
 	entry.LastUsedAt = nowISO()
 	entry.LastUsedSHA = hash
 	state.Entries[key] = entry
@@ -176,7 +174,7 @@ func (m *Manager) Use(tool Tool, label string, targetOverride string) (*UseResul
 		Label:              label,
 		TargetPath:         target,
 		ChangeSinceLastUse: changeSignal,
-		Insight:            inspectAuth(tool, rawToWrite),
+		Insight:            insight,
 	}, nil
 }
 
@@ -300,7 +298,7 @@ func (m *Manager) Active(toolFilter *Tool) ([]ActiveItem, error) {
 		return nil, err
 	}
 
-	tools := []Tool{ToolCodex, ToolClaude, ToolPi}
+	tools := []Tool{ToolCodex, ToolPi}
 	if toolFilter != nil {
 		tools = []Tool{*toolFilter}
 	}
@@ -423,6 +421,57 @@ func piProviderSubsetMatch(snapshotObj map[string]any, runtimeObj map[string]any
 	return true
 }
 
+func hydrateIdentityFromCache(insight *AuthInsight, state State) {
+	if insight == nil {
+		return
+	}
+
+	insight.AccountID = strings.TrimSpace(insight.AccountID)
+	insight.AccountEmail = strings.TrimSpace(insight.AccountEmail)
+	insight.AccountPlan = strings.TrimSpace(insight.AccountPlan)
+
+	if insight.AccountID == "" {
+		return
+	}
+	if insight.AccountEmail != "" {
+		return
+	}
+
+	cacheItem, ok := state.IdentityCache[insight.AccountID]
+	if !ok {
+		return
+	}
+	if strings.TrimSpace(cacheItem.Email) != "" {
+		insight.AccountEmail = strings.TrimSpace(cacheItem.Email)
+	}
+	if insight.AccountPlan == "" && strings.TrimSpace(cacheItem.Plan) != "" {
+		insight.AccountPlan = strings.TrimSpace(cacheItem.Plan)
+	}
+}
+
+func rememberIdentity(state *State, insight AuthInsight) {
+	if state == nil {
+		return
+	}
+
+	accountID := strings.TrimSpace(insight.AccountID)
+	email := strings.TrimSpace(insight.AccountEmail)
+	plan := strings.TrimSpace(insight.AccountPlan)
+	if accountID == "" || email == "" {
+		return
+	}
+
+	if state.IdentityCache == nil {
+		state.IdentityCache = map[string]IdentityCacheItem{}
+	}
+
+	state.IdentityCache[accountID] = IdentityCacheItem{
+		Email:     email,
+		Plan:      plan,
+		UpdatedAt: nowISO(),
+	}
+}
+
 func (m *Manager) resolveSourcePath(tool Tool, sourceOverride string) (string, error) {
 	if strings.TrimSpace(sourceOverride) != "" {
 		p, err := expandPath(sourceOverride)
@@ -468,6 +517,9 @@ func (m *Manager) loadState() (State, error) {
 	}
 	if state.Entries == nil {
 		state.Entries = map[string]StateEntry{}
+	}
+	if state.IdentityCache == nil {
+		state.IdentityCache = map[string]IdentityCacheItem{}
 	}
 	if state.Version == 0 {
 		state.Version = 1
