@@ -115,7 +115,6 @@ func inspectPi(raw []byte) AuthInsight {
 	}
 	statuses := []providerStatus{}
 	codexIdentity := piIdentityCandidate{}
-	claudeIdentity := piIdentityCandidate{}
 	otherIdentity := piIdentityCandidate{}
 
 	for key, value := range payload {
@@ -130,8 +129,6 @@ func inspectPi(raw []byte) AuthInsight {
 		switch role {
 		case "codex":
 			codexIdentity = mergePIIdentityCandidate(codexIdentity, identity)
-		case "claude":
-			claudeIdentity = mergePIIdentityCandidate(claudeIdentity, identity)
 		default:
 			otherIdentity = mergePIIdentityCandidate(otherIdentity, identity)
 		}
@@ -152,7 +149,7 @@ func inspectPi(raw []byte) AuthInsight {
 		})
 	}
 
-	selectedIdentity := choosePIIdentityCandidate(codexIdentity, claudeIdentity, otherIdentity)
+	selectedIdentity := choosePIIdentityCandidate(codexIdentity, otherIdentity)
 	insight.AccountEmail = selectedIdentity.AccountEmail
 	insight.AccountPlan = selectedIdentity.AccountPlan
 	insight.AccountID = selectedIdentity.AccountID
@@ -181,7 +178,7 @@ func inspectPi(raw []byte) AuthInsight {
 
 func displayPIProviderName(providerKey string, role string) string {
 	switch role {
-	case "codex", "claude":
+	case "codex":
 		return role
 	default:
 		return providerKey
@@ -193,8 +190,6 @@ func classifyPIProviderRole(providerKey string, tokenInfo accessTokenInsight) st
 	switch {
 	case strings.Contains(key, "codex"), strings.Contains(key, "openai"):
 		return "codex"
-	case strings.Contains(key, "claude"), strings.Contains(key, "anthropic"):
-		return "claude"
 	}
 
 	issuer := strings.ToLower(strings.TrimSpace(tokenInfo.Issuer))
@@ -202,8 +197,6 @@ func classifyPIProviderRole(providerKey string, tokenInfo accessTokenInsight) st
 	switch {
 	case strings.Contains(issuer, "openai"), strings.Contains(audience, "openai"):
 		return "codex"
-	case strings.Contains(issuer, "anthropic"), strings.Contains(audience, "anthropic"):
-		return "claude"
 	default:
 		return "other"
 	}
@@ -290,8 +283,6 @@ func resolveAnyProviderEmailFromJWT(info accessTokenInsight) string {
 		"user",
 		"account",
 		"profile",
-		"https://claude.ai/account",
-		"https://api.anthropic.com/account",
 	} {
 		nested, ok := info.Claims[nestedKey].(map[string]any)
 		if !ok {

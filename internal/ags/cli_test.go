@@ -157,7 +157,7 @@ func TestCLIListPiNormalizesProviderNames(t *testing.T) {
 	if strings.Contains(out.String(), "openai-codex=") {
 		t.Fatalf("did not expect raw provider name in output: %q", out.String())
 	}
-	if !strings.Contains(out.String(), "detail=codex=valid") || !strings.Contains(out.String(), "detail=claude=valid") {
+	if !strings.Contains(out.String(), "detail=codex=valid") || !strings.Contains(out.String(), "detail=anthropic=valid") {
 		t.Fatalf("expected normalized provider names in output, got %q", out.String())
 	}
 }
