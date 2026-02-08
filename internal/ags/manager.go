@@ -51,6 +51,14 @@ func NewManager(rootDir string) (*Manager, error) {
 }
 
 func (m *Manager) Save(tool Tool, label string, sourceOverride string) (*SaveResult, error) {
+	return m.save(tool, label, sourceOverride, "")
+}
+
+func (m *Manager) SaveWithPIProvider(tool Tool, label string, sourceOverride string, provider string) (*SaveResult, error) {
+	return m.save(tool, label, sourceOverride, provider)
+}
+
+func (m *Manager) save(tool Tool, label string, sourceOverride string, piProvider string) (*SaveResult, error) {
 	sourcePath, err := m.resolveSourcePath(tool, sourceOverride)
 	if err != nil {
 		return nil, err
@@ -62,6 +70,12 @@ func (m *Manager) Save(tool Tool, label string, sourceOverride string) (*SaveRes
 	}
 	if err := validateJSONObject(raw); err != nil {
 		return nil, fmt.Errorf("source is not valid JSON object: %w", err)
+	}
+	if tool == ToolPi && strings.TrimSpace(piProvider) != "" {
+		raw, err = filterPIAuthProviders(raw, piProvider)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	snapshotPath := m.snapshotPath(tool, label)
@@ -108,6 +122,14 @@ func (m *Manager) Save(tool Tool, label string, sourceOverride string) (*SaveRes
 }
 
 func (m *Manager) Use(tool Tool, label string, targetOverride string) (*UseResult, error) {
+	return m.use(tool, label, targetOverride, "")
+}
+
+func (m *Manager) UseWithPIProvider(tool Tool, label string, targetOverride string, provider string) (*UseResult, error) {
+	return m.use(tool, label, targetOverride, provider)
+}
+
+func (m *Manager) use(tool Tool, label string, targetOverride string, piProvider string) (*UseResult, error) {
 	state, err := m.loadState()
 	if err != nil {
 		return nil, err
@@ -126,6 +148,13 @@ func (m *Manager) Use(tool Tool, label string, targetOverride string) (*UseResul
 	if err := validateJSONObject(snapshotRaw); err != nil {
 		return nil, fmt.Errorf("snapshot JSON invalid: %w", err)
 	}
+	snapshotToApply := snapshotRaw
+	if tool == ToolPi && strings.TrimSpace(piProvider) != "" {
+		snapshotToApply, err = filterPIAuthProviders(snapshotRaw, piProvider)
+		if err != nil {
+			return nil, err
+		}
+	}
 
 	target := targetOverride
 	if strings.TrimSpace(target) == "" {
@@ -136,9 +165,9 @@ func (m *Manager) Use(tool Tool, label string, targetOverride string) (*UseResul
 		return nil, err
 	}
 
-	rawToWrite := snapshotRaw
+	rawToWrite := snapshotToApply
 	if tool == ToolPi {
-		rawToWrite, err = mergePIAuthWithTarget(snapshotRaw, target)
+		rawToWrite, err = mergePIAuthWithTarget(snapshotToApply, target)
 		if err != nil {
 			return nil, fmt.Errorf("merging pi auth file: %w", err)
 		}
@@ -148,7 +177,7 @@ func (m *Manager) Use(tool Tool, label string, targetOverride string) (*UseResul
 		return nil, fmt.Errorf("writing target auth file: %w", err)
 	}
 
-	hash := sha256Hex(snapshotRaw)
+	hash := sha256Hex(snapshotToApply)
 	changeSignal := "first use"
 	if entry.LastUsedSHA != "" {
 		if entry.LastUsedSHA == hash {
@@ -158,7 +187,7 @@ func (m *Manager) Use(tool Tool, label string, targetOverride string) (*UseResul
 		}
 	}
 
-	insight := inspectAuth(tool, rawToWrite)
+	insight := inspectAuth(tool, snapshotToApply)
 	hydrateIdentityFromCache(&insight, state)
 	rememberIdentity(&state, insight)
 
@@ -176,6 +205,71 @@ func (m *Manager) Use(tool Tool, label string, targetOverride string) (*UseResul
 		ChangeSinceLastUse: changeSignal,
 		Insight:            insight,
 	}, nil
+}
+
+func filterPIAuthProviders(raw []byte, selector string) ([]byte, error) {
+	var payload map[string]any
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return nil, fmt.Errorf("pi auth JSON invalid: %w", err)
+	}
+	keys, err := resolvePIProviderKeys(payload, selector)
+	if err != nil {
+		return nil, err
+	}
+
+	filtered := make(map[string]any, len(keys))
+	for _, key := range keys {
+		filtered[key] = payload[key]
+	}
+
+	out, err := jsonMarshalIndent(filtered, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("serializing filtered pi auth: %w", err)
+	}
+	out = append(out, '\n')
+	return out, nil
+}
+
+func resolvePIProviderKeys(payload map[string]any, selector string) ([]string, error) {
+	selector = strings.TrimSpace(strings.ToLower(selector))
+	if selector == "" {
+		return nil, errors.New("pi provider selector is required")
+	}
+
+	matches := []string{}
+	switch selector {
+	case "codex":
+		for key := range payload {
+			lower := strings.ToLower(key)
+			if strings.Contains(lower, "codex") || strings.Contains(lower, "openai") {
+				matches = append(matches, key)
+			}
+		}
+	case "anthropic":
+		for key := range payload {
+			lower := strings.ToLower(key)
+			if strings.Contains(lower, "anthropic") {
+				matches = append(matches, key)
+			}
+		}
+	default:
+		for key := range payload {
+			if key == selector || strings.EqualFold(key, selector) {
+				matches = append(matches, key)
+			}
+		}
+	}
+	sort.Strings(matches)
+	if len(matches) > 0 {
+		return matches, nil
+	}
+
+	available := make([]string, 0, len(payload))
+	for key := range payload {
+		available = append(available, key)
+	}
+	sort.Strings(available)
+	return nil, fmt.Errorf("pi provider %q not found in source/snapshot. available providers: %s", selector, strings.Join(available, ", "))
 }
 
 func mergePIAuthWithTarget(snapshotRaw []byte, targetPath string) ([]byte, error) {

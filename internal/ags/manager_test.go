@@ -789,6 +789,123 @@ func TestMergePIAuthWithTarget(t *testing.T) {
 	})
 }
 
+func TestFilterPIAuthProviders(t *testing.T) {
+	t.Run("invalid json", func(t *testing.T) {
+		if _, err := filterPIAuthProviders([]byte("not-json"), "codex"); err == nil {
+			t.Fatalf("expected invalid JSON error")
+		}
+	})
+
+	t.Run("missing provider", func(t *testing.T) {
+		raw := []byte(`{"openai-codex":{"access":"c1"},"anthropic":{"access":"a1"}}`)
+		if _, err := filterPIAuthProviders(raw, "missing"); err == nil {
+			t.Fatalf("expected provider missing error")
+		}
+	})
+
+	t.Run("codex alias", func(t *testing.T) {
+		raw := []byte(`{"openai-codex":{"access":"c1"},"anthropic":{"access":"a1"}}`)
+		filtered, err := filterPIAuthProviders(raw, "codex")
+		if err != nil {
+			t.Fatalf("filter codex: %v", err)
+		}
+		var obj map[string]any
+		if err := json.Unmarshal(filtered, &obj); err != nil {
+			t.Fatalf("unmarshal filtered: %v", err)
+		}
+		if len(obj) != 1 {
+			t.Fatalf("expected single provider after codex filter, got %+v", obj)
+		}
+		if _, ok := obj["openai-codex"]; !ok {
+			t.Fatalf("expected openai-codex key, got %+v", obj)
+		}
+	})
+
+	t.Run("exact provider case-insensitive", func(t *testing.T) {
+		raw := []byte(`{"openai-codex":{"access":"c1"},"anthropic":{"access":"a1"}}`)
+		filtered, err := filterPIAuthProviders(raw, "ANTHROPIC")
+		if err != nil {
+			t.Fatalf("filter anthropic exact: %v", err)
+		}
+		var obj map[string]any
+		if err := json.Unmarshal(filtered, &obj); err != nil {
+			t.Fatalf("unmarshal filtered: %v", err)
+		}
+		if len(obj) != 1 {
+			t.Fatalf("expected single provider after exact filter, got %+v", obj)
+		}
+		if _, ok := obj["anthropic"]; !ok {
+			t.Fatalf("expected anthropic key, got %+v", obj)
+		}
+	})
+}
+
+func TestManagerSaveAndUseWithPIProvider(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	root := t.TempDir()
+	m, err := NewManager(root)
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+
+	source := filepath.Join(t.TempDir(), "pi-source.json")
+	writeFile(t, source, []byte(`{"openai-codex":{"access":"codex-work"},"anthropic":{"access":"anthro-work"}}`))
+
+	if _, err := m.SaveWithPIProvider(ToolPi, "codex-only", source, "codex"); err != nil {
+		t.Fatalf("save codex-only provider: %v", err)
+	}
+
+	state, err := m.loadState()
+	if err != nil {
+		t.Fatalf("load state: %v", err)
+	}
+	entry, ok := state.Entries[stateKey(ToolPi, "codex-only")]
+	if !ok {
+		t.Fatalf("expected codex-only entry in state")
+	}
+	snapshotRaw, err := os.ReadFile(entry.SnapshotPath)
+	if err != nil {
+		t.Fatalf("read snapshot: %v", err)
+	}
+	var savedSnapshot map[string]any
+	if err := json.Unmarshal(snapshotRaw, &savedSnapshot); err != nil {
+		t.Fatalf("unmarshal snapshot: %v", err)
+	}
+	if len(savedSnapshot) != 1 {
+		t.Fatalf("expected single provider in saved snapshot, got %+v", savedSnapshot)
+	}
+	if _, ok := savedSnapshot["openai-codex"]; !ok {
+		t.Fatalf("expected codex provider in saved snapshot, got %+v", savedSnapshot)
+	}
+
+	if _, err := m.Save(ToolPi, "full", source); err != nil {
+		t.Fatalf("save full pi snapshot: %v", err)
+	}
+
+	target := filepath.Join(t.TempDir(), "pi-target.json")
+	writeFile(t, target, []byte(`{"openai-codex":{"access":"codex-old"},"anthropic":{"access":"anthro-old"}}`))
+
+	if _, err := m.UseWithPIProvider(ToolPi, "full", target, "anthropic"); err != nil {
+		t.Fatalf("use full snapshot with anthropic selector: %v", err)
+	}
+
+	mergedRaw, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatalf("read target: %v", err)
+	}
+	var merged map[string]any
+	if err := json.Unmarshal(mergedRaw, &merged); err != nil {
+		t.Fatalf("unmarshal merged target: %v", err)
+	}
+	if merged["openai-codex"].(map[string]any)["access"] != "codex-old" {
+		t.Fatalf("expected codex untouched by anthropic selector, got %+v", merged)
+	}
+	if merged["anthropic"].(map[string]any)["access"] != "anthro-work" {
+		t.Fatalf("expected anthropic replaced by selector, got %+v", merged)
+	}
+}
+
 func TestManagerUsePIMergesProviders(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

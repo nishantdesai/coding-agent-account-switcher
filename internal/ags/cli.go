@@ -62,7 +62,7 @@ func runSave(args []string, stdout io.Writer) error {
 		return nil
 	}
 	if len(args) == 0 {
-		return errors.New("usage: ags save <tool> <label> [--source <path>] [--root <path>] OR ags save <tool> --label <name> [--source <path>] [--root <path>]")
+		return errors.New("usage: ags save <tool> <label> [--source <path>] [--provider <id>] [--root <path>] OR ags save <tool> --label <name> [--source <path>] [--provider <id>] [--root <path>]")
 	}
 	tool, ok := ParseTool(strings.ToLower(args[0]))
 	if !ok {
@@ -77,6 +77,7 @@ func runSave(args []string, stdout io.Writer) error {
 	label := fs.String("label", "", "Profile label name, e.g. work")
 	labelShort := fs.String("l", "", "Profile label name, e.g. work")
 	source := fs.String("source", "", "Override source auth path for this save")
+	provider := fs.String("provider", "", "For pi only: save just one provider (codex, anthropic, or provider key)")
 	root := fs.String("root", defaultRootDir(), "AGS data root directory")
 	verbose := fs.Bool("verbose", false, "Print additional detail lines")
 
@@ -94,12 +95,15 @@ func runSave(args []string, stdout io.Writer) error {
 	if !labelPattern.MatchString(resolvedLabel) {
 		return errors.New("--label must match [a-zA-Z0-9._-]+")
 	}
+	if strings.TrimSpace(*provider) != "" && tool != ToolPi {
+		return errors.New("--provider is only supported for tool=pi")
+	}
 
 	manager, err := NewManager(*root)
 	if err != nil {
 		return err
 	}
-	result, err := manager.Save(tool, resolvedLabel, *source)
+	result, err := manager.SaveWithPIProvider(tool, resolvedLabel, *source, strings.TrimSpace(*provider))
 	if err != nil {
 		return err
 	}
@@ -130,7 +134,7 @@ func runUse(args []string, stdout io.Writer) error {
 		return nil
 	}
 	if len(args) == 0 {
-		return errors.New("usage: ags use <tool> <label> [--target <path>] [--root <path>] OR ags use <tool> --label <name> [--target <path>] [--root <path>]")
+		return errors.New("usage: ags use <tool> <label> [--target <path>] [--provider <id>] [--root <path>] OR ags use <tool> --label <name> [--target <path>] [--provider <id>] [--root <path>]")
 	}
 	tool, ok := ParseTool(strings.ToLower(args[0]))
 	if !ok {
@@ -145,6 +149,7 @@ func runUse(args []string, stdout io.Writer) error {
 	label := fs.String("label", "", "Profile label name, e.g. work")
 	labelShort := fs.String("l", "", "Profile label name, e.g. work")
 	target := fs.String("target", "", "Override runtime target path for this use")
+	provider := fs.String("provider", "", "For pi only: apply just one provider (codex, anthropic, or provider key)")
 	root := fs.String("root", defaultRootDir(), "AGS data root directory")
 	verbose := fs.Bool("verbose", false, "Print additional detail lines")
 
@@ -162,12 +167,15 @@ func runUse(args []string, stdout io.Writer) error {
 	if !labelPattern.MatchString(resolvedLabel) {
 		return errors.New("--label must match [a-zA-Z0-9._-]+")
 	}
+	if strings.TrimSpace(*provider) != "" && tool != ToolPi {
+		return errors.New("--provider is only supported for tool=pi")
+	}
 
 	manager, err := NewManager(*root)
 	if err != nil {
 		return err
 	}
-	result, err := manager.Use(tool, resolvedLabel, *target)
+	result, err := manager.UseWithPIProvider(tool, resolvedLabel, *target, strings.TrimSpace(*provider))
 	if err != nil {
 		return err
 	}
@@ -290,30 +298,40 @@ func runList(args []string, stdout io.Writer) error {
 		return nil
 	}
 
-	fmt.Fprintln(stdout, "tool\tlabel\tstatus\tneeds refresh\texpires\tlast refresh\tlast saved\tlast used")
-	for _, item := range items {
+	fmt.Fprintln(stdout, "Saved profiles:")
+	currentTool := Tool("")
+	for i, item := range items {
+		if item.Tool != currentTool {
+			if i > 0 {
+				fmt.Fprintln(stdout)
+			}
+			currentTool = item.Tool
+			fmt.Fprintf(stdout, "%s\n", currentTool)
+		}
+
 		fmt.Fprintf(
 			stdout,
-			"%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-			item.Tool,
+			"  %-18s status=%-13s refresh=%-7s expires=%s\n",
 			item.Label,
 			orDash(item.AuthInsight.Status),
 			orDash(item.AuthInsight.NeedsRefresh),
-			orDash(formatHumanTime(item.AuthInsight.ExpiresAt)),
-			orDash(formatHumanTime(item.AuthInsight.LastRefresh)),
-			orDash(item.SavedAt),
-			orDash(item.LastUsedAt),
+			summarizeExpiry(item.AuthInsight.ExpiresAt),
 		)
+
 		if *verbose {
-			fmt.Fprintf(stdout, "  snapshot=%s\n", item.Snapshot)
-			if item.AuthInsight.ExpiresAt != "" {
-				fmt.Fprintf(stdout, "  expires raw=%s\n", item.AuthInsight.ExpiresAt)
+			if identity := formatIdentity(item.AuthInsight); identity != "" {
+				fmt.Fprintf(stdout, "    account: %s\n", identity)
 			}
 			if item.AuthInsight.LastRefresh != "" {
-				fmt.Fprintf(stdout, "  last refresh raw=%s\n", item.AuthInsight.LastRefresh)
+				fmt.Fprintf(stdout, "    last refresh: %s\n", formatHumanTime(item.AuthInsight.LastRefresh))
 			}
+			fmt.Fprintf(stdout, "    saved: %s\n", formatHumanTime(item.SavedAt))
+			if item.LastUsedAt != "" {
+				fmt.Fprintf(stdout, "    last used: %s\n", formatHumanTime(item.LastUsedAt))
+			}
+			fmt.Fprintf(stdout, "    snapshot: %s\n", item.Snapshot)
 			for _, detail := range item.AuthInsight.Details {
-				fmt.Fprintf(stdout, "  detail=%s\n", detail)
+				fmt.Fprintf(stdout, "    detail: %s\n", detail)
 			}
 		}
 	}
@@ -477,6 +495,18 @@ func formatHumanTime(raw string) string {
 	return fmt.Sprintf("%s (%s)", formatRelative(t), t.UTC().Format("Mon, Jan 2, 2006, 3:04 PM MST"))
 }
 
+func summarizeExpiry(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "-"
+	}
+	t, ok := parseISO(raw)
+	if !ok {
+		return raw
+	}
+	return formatRelative(t)
+}
+
 func parseISO(raw string) (time.Time, bool) {
 	t, err := time.Parse(time.RFC3339Nano, raw)
 	if err != nil {
@@ -592,12 +622,14 @@ USAGE:
 FLAGS:
   --label, -l <name> Required profile label (example: work, personal)
   --source <path>   Optional override source auth file path
+  --provider <id>   For pi only: save just one provider (codex, anthropic, or key)
   --root <path>     Optional AGS data root (default: ~/.config/ags)
   --verbose         Show additional detail lines
 
 EXAMPLES:
   ags save codex work
   ags save pi personal
+  ags save pi codex-work --provider codex
   ags save pi --label work --source ~/.pi/agent/auth.json
 `
 	case "use":
@@ -610,6 +642,7 @@ USAGE:
 FLAGS:
   --label, -l <name> Required profile label to activate
   --target <path>   Optional override runtime auth destination
+  --provider <id>   For pi only: apply just one provider (codex, anthropic, or key)
   --root <path>     Optional AGS data root (default: ~/.config/ags)
   --verbose         Show additional detail lines
 
@@ -621,6 +654,7 @@ BEHAVIOR:
 EXAMPLES:
   ags use codex work
   ags use pi personal
+  ags use pi codex-work --provider codex
 `
 	case "delete":
 		return `ags delete - remove a labeled auth snapshot
@@ -649,11 +683,12 @@ USAGE:
   ags list [tool] [--verbose] [--root <path>]
 
 FLAGS:
-  --verbose         Show raw ISO timestamps and additional details
+  --verbose         Show account, timestamps, snapshot path, and details
   --root <path>     Optional AGS data root (default: ~/.config/ags)
 
-OUTPUT COLUMNS:
-  tool, label, status, needs refresh, expires, last refresh, last saved, last used
+OUTPUT:
+  Grouped by tool with one concise line per label.
+  Use --verbose for additional metadata.
 
 EXAMPLES:
   ags list

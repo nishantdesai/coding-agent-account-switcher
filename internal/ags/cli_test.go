@@ -90,7 +90,7 @@ func TestCLIEndToEndSaveUseListDelete(t *testing.T) {
 	if err := Run([]string{"list", "codex", "--verbose", "--root", root}, &out, &out); err != nil {
 		t.Fatalf("list verbose: %v", err)
 	}
-	if !strings.Contains(out.String(), "needs refresh") || !strings.Contains(out.String(), "expires raw=") {
+	if !strings.Contains(out.String(), "Saved profiles:") || !strings.Contains(out.String(), "snapshot:") {
 		t.Fatalf("unexpected list output: %q", out.String())
 	}
 
@@ -157,8 +157,41 @@ func TestCLIListPiNormalizesProviderNames(t *testing.T) {
 	if strings.Contains(out.String(), "openai-codex=") {
 		t.Fatalf("did not expect raw provider name in output: %q", out.String())
 	}
-	if !strings.Contains(out.String(), "detail=codex=valid") || !strings.Contains(out.String(), "detail=anthropic=valid") {
+	if !strings.Contains(out.String(), "detail: codex=valid") || !strings.Contains(out.String(), "detail: anthropic=valid") {
 		t.Fatalf("expected normalized provider names in output, got %q", out.String())
+	}
+}
+
+func TestCLIPiProviderScopedSaveAndUse(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	root := t.TempDir()
+	source := filepath.Join(root, "pi-source.json")
+	target := filepath.Join(root, "pi-target.json")
+	writeFile(t, source, []byte(`{"openai-codex":{"access":"codex-work"},"anthropic":{"access":"anthro-work"}}`))
+	writeFile(t, target, []byte(`{"openai-codex":{"access":"codex-old"},"anthropic":{"access":"anthro-old"}}`))
+
+	var out bytes.Buffer
+	if err := Run([]string{"save", "pi", "work", "--provider", "codex", "--source", source, "--root", root}, &out, &out); err != nil {
+		t.Fatalf("save pi codex-only: %v", err)
+	}
+	if !strings.Contains(out.String(), "Saved pi for work") {
+		t.Fatalf("unexpected save output: %q", out.String())
+	}
+
+	out.Reset()
+	if err := Run([]string{"use", "pi", "work", "--provider", "codex", "--target", target, "--root", root}, &out, &out); err != nil {
+		t.Fatalf("use pi codex-only: %v", err)
+	}
+
+	raw, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatalf("read target: %v", err)
+	}
+	if !strings.Contains(string(raw), `"access": "codex-work"`) {
+		t.Fatalf("expected codex provider replaced, got %q", string(raw))
+	}
+	if !strings.Contains(string(raw), `"access": "anthro-old"`) {
+		t.Fatalf("expected anthropic provider preserved, got %q", string(raw))
 	}
 }
 
@@ -179,7 +212,9 @@ func TestCLIValidationAndParseErrors(t *testing.T) {
 		{"save conflict label", []string{"save", "codex", "work", "--label", "personal", "--source", source, "--root", root}, "conflicting labels"},
 		{"save too many args", []string{"save", "codex", "work", "extra", "--source", source, "--root", root}, "too many arguments"},
 		{"save parse error", []string{"save", "codex", "work", "--bad-flag"}, "flag provided but not defined"},
+		{"save provider wrong tool", []string{"save", "codex", "work", "--provider", "codex"}, "--provider is only supported for tool=pi"},
 		{"use invalid tool", []string{"use", "bad", "work"}, "invalid tool"},
+		{"use provider wrong tool", []string{"use", "codex", "work", "--provider", "codex"}, "--provider is only supported for tool=pi"},
 		{"delete invalid tool", []string{"delete", "bad", "work"}, "invalid tool"},
 		{"list invalid tool", []string{"list", "bad"}, "invalid tool"},
 		{"list extra arg", []string{"list", "codex", "x"}, "usage: ags list"},
@@ -426,7 +461,7 @@ func TestRunListErrorAndVerboseBranches(t *testing.T) {
 	if err := runList([]string{"codex", "--verbose", "--root", root}, &out); err != nil {
 		t.Fatalf("list verbose: %v", err)
 	}
-	if !strings.Contains(out.String(), "last refresh raw=") || !strings.Contains(out.String(), "detail=") {
+	if !strings.Contains(out.String(), "last refresh:") || !strings.Contains(out.String(), "detail:") {
 		t.Fatalf("expected verbose last refresh/detail branches, got %q", out.String())
 	}
 }
