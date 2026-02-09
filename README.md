@@ -9,6 +9,26 @@ It helps you:
 - inspect token/account health,
 - keep CLI usage simple and scriptable.
 
+## Quick start
+
+```bash
+# install
+brew tap nishantdesai/coding-agent-account-switcher https://github.com/nishantdesai/coding-agent-account-switcher
+brew install nishantdesai/coding-agent-account-switcher/ags
+
+# save current auth into labeled snapshots
+ags save codex work
+ags save pi personal
+
+# switch to a saved snapshot
+ags use codex work
+ags use pi personal
+
+# inspect saved profiles and active runtime match
+ags list
+ags active
+```
+
 ## Supported tools
 
 `ags` currently supports:
@@ -34,22 +54,6 @@ Build from source:
 
 ```bash
 go build -o ags ./cmd/ags
-```
-
-## Quick start
-
-```bash
-# save current auth into labeled snapshots
-ags save codex work
-ags save pi personal
-
-# switch to a saved snapshot
-ags use codex work
-ags use pi personal
-
-# inspect saved profiles and active runtime match
-ags list
-ags active
 ```
 
 ## Command reference
