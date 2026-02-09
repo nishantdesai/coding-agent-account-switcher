@@ -79,36 +79,39 @@ AGS stores data under `~/.config/ags`:
 go build -o ags ./cmd/ags
 ```
 
-## Release Readiness (GitHub + Homebrew)
+## Install (Homebrew)
 
-Current gaps to close before a clean public release:
+After the first tagged release is published:
 
-1. CI pipeline
-- Add GitHub Actions for `go test ./...` and optional lint/format checks on PRs.
+```bash
+brew tap nishantdesai/ags
+brew install ags
+```
 
-2. Versioned release process
-- Define tag flow (`v0.1.0`, etc.) and changelog process.
-- Ensure `ags version` is set from build metadata or release automation.
+Release publishing details are documented in `docs/RELEASING.md`.
 
-3. Homebrew packaging automation
-- Add `.goreleaser.yaml` for cross-platform archives + checksums.
-- Create/maintain a Homebrew tap with a formula that consumes release artifacts.
+## Release setup status
 
-4. Install docs
-- Add README install section with:
-  - `brew tap ...`
-  - `brew install ...`
-  - direct binary download fallback.
+Implemented:
 
-5. Repo hygiene
-- Add `LICENSE` (if not already planned) and contribution guidance (`CONTRIBUTING.md`) for OSS onboarding.
+- GitHub Actions CI (`.github/workflows/ci.yml`) for build, tests, race tests, and `go vet`.
+- GoReleaser config (`.goreleaser.yaml`) for multi-arch binaries, checksums, and version injection.
+- GitHub Actions release workflow (`.github/workflows/release.yml`) for tag-driven publishing.
+- Homebrew tap update via GoReleaser (`nishantdesai/homebrew-ags`).
+- OSS basics: `LICENSE`, `CONTRIBUTING.md`, `SECURITY.md`.
 
-These are mostly packaging/automation tasks; core CLI behavior is already in place.
+Still required before first public release:
+
+1. Create the tap repository `nishantdesai/homebrew-ags`.
+2. Add repo secret `TAP_GITHUB_TOKEN` with write access to the tap repo.
+3. Push first version tag (for example `v0.1.0`) to trigger release automation.
 
 ## Security notes
 
 - Snapshot and state files are written with `0600`.
 - This repo stores real auth snapshots on disk; keep your machine and backups encrypted.
+- Manager-level validation now enforces tool and label constraints even for non-CLI callers.
+- `ags use` now performs rollback of target auth writes if metadata/state persistence fails.
 - For a future version, move secret payloads to macOS Keychain and keep only references in `state.json`.
 
 ## Learning guide

@@ -1,0 +1,31 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Verify build
+        run: go build ./cmd/ags
+
+      - name: Run tests
+        run: go test ./...
+
+      - name: Run race tests
+        run: go test ./... -race
+
+      - name: Run vet
+        run: go vet ./...
