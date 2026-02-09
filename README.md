@@ -26,7 +26,8 @@ Codex can be managed in two ways:
 Homebrew (single-repo formula):
 
 ```bash
-brew install --HEAD https://raw.githubusercontent.com/nishantdesai/coding-agent-account-switcher/main/Formula/ags.rb
+brew tap nishantdesai/coding-agent-account-switcher https://github.com/nishantdesai/coding-agent-account-switcher
+brew install nishantdesai/coding-agent-account-switcher/ags
 ```
 
 Build from source:
@@ -121,21 +122,6 @@ Script-friendly list output:
 
 - `ags list --plain`
 - `ags list codex --plain --no-headers`
-
-## Release setup status
-
-Implemented:
-
-- GitHub Actions CI (`.github/workflows/ci.yml`) for build, tests, race tests, and `go vet`.
-- GoReleaser config (`.goreleaser.yaml`) for multi-arch binaries, checksums, and version injection.
-- GitHub Actions release workflow (`.github/workflows/release.yml`) for tag-driven publishing.
-- Homebrew formula in-repo at `Formula/ags.rb` (install via raw URL).
-- OSS basics: `LICENSE`, `CONTRIBUTING.md`, `SECURITY.md`.
-
-Still required before first public release:
-
-1. Push first version tag (for example `v0.1.0`) to trigger release automation.
-2. Optionally add a pinned-version formula flow later if you want non-HEAD Homebrew installs.
 
 ## Security
 

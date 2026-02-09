@@ -13,13 +13,16 @@ git push origin v0.1.0
 3. GitHub Actions `release` workflow will:
 - run tests,
 - publish release artifacts.
+4. Update `Formula/ags.rb` to the new version and release checksums.
+5. Push the formula update to `main`.
 
 ## Homebrew install (simple mode)
 
 ```bash
-brew install --HEAD https://raw.githubusercontent.com/nishantdesai/coding-agent-account-switcher/main/Formula/ags.rb
+brew tap nishantdesai/coding-agent-account-switcher https://github.com/nishantdesai/coding-agent-account-switcher
+brew install nishantdesai/coding-agent-account-switcher/ags
 ```
 
 ## Optional future improvement
 
-If you want pinned version installs (`brew install ags` without `--HEAD`), add a dedicated tap repo and automated formula updates later.
+Automate formula version/checksum updates on each release.
