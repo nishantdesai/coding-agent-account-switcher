@@ -11,7 +11,7 @@ It helps you:
 
 ## Quick start
 
-Install (tap is required for this repo layout):
+Install:
 
 ```bash
 brew tap nishantdesai/coding-agent-account-switcher https://github.com/nishantdesai/coding-agent-account-switcher
