@@ -31,6 +31,7 @@ Codex support is available in two places:
 - `delete`: removes a saved labeled snapshot and its state metadata for that tool.
 - `list`: shows saved labels grouped by tool with compact human-readable status lines.
   - Use `--verbose` for account/timestamp/snapshot/detail lines.
+  - Use `--plain` for script-friendly tab-separated rows (`--no-headers` optional).
 - `active`: shows which saved label currently matches each tool runtime auth file.
 - `version`: prints CLI version.
 
@@ -60,6 +61,10 @@ Pi provider-scoped examples:
 - `ags save pi anthropic-work --source /path/to/pi-auth.json --provider anthropic`
 - `ags use pi codex-work --provider codex`
 - `ags use pi anthropic-work --provider anthropic`
+
+Script-friendly list output (inspired by tools like `jira-cli`):
+- `ags list --plain`
+- `ags list codex --plain --no-headers`
 
 ## Data storage
 

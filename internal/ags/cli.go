@@ -277,11 +277,16 @@ func runList(args []string, stdout io.Writer) error {
 
 	root := fs.String("root", defaultRootDir(), "AGS data root directory")
 	verbose := fs.Bool("verbose", false, "Print additional detail lines")
+	plain := fs.Bool("plain", false, "Print plain tab-separated output for scripts")
+	noHeaders := fs.Bool("no-headers", false, "With --plain, suppress header row")
 	if err := fs.Parse(flagArgs); err != nil {
 		return err
 	}
 	if fs.NArg() > 0 {
 		return errors.New("usage: ags list [tool] [--verbose] [--root <path>]")
+	}
+	if *noHeaders && !*plain {
+		return errors.New("--no-headers requires --plain")
 	}
 
 	manager, err := NewManager(*root)
@@ -295,6 +300,27 @@ func runList(args []string, stdout io.Writer) error {
 	}
 	if len(items) == 0 {
 		fmt.Fprintln(stdout, "No saved profiles found.")
+		return nil
+	}
+	if *plain {
+		if !*noHeaders {
+			fmt.Fprintln(stdout, "tool\tlabel\tstatus\tneeds_refresh\texpires_at\tlast_refresh\tsaved_at\tlast_used_at\taccount")
+		}
+		for _, item := range items {
+			fmt.Fprintf(
+				stdout,
+				"%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+				sanitizePlainField(item.Tool.String()),
+				sanitizePlainField(item.Label),
+				sanitizePlainField(item.AuthInsight.Status),
+				sanitizePlainField(item.AuthInsight.NeedsRefresh),
+				sanitizePlainField(item.AuthInsight.ExpiresAt),
+				sanitizePlainField(item.AuthInsight.LastRefresh),
+				sanitizePlainField(item.SavedAt),
+				sanitizePlainField(item.LastUsedAt),
+				sanitizePlainField(formatIdentity(item.AuthInsight)),
+			)
+		}
 		return nil
 	}
 
@@ -507,6 +533,12 @@ func summarizeExpiry(raw string) string {
 	return formatRelative(t)
 }
 
+func sanitizePlainField(v string) string {
+	v = strings.ReplaceAll(v, "\t", " ")
+	v = strings.ReplaceAll(v, "\n", " ")
+	return strings.ReplaceAll(v, "\r", " ")
+}
+
 func parseISO(raw string) (time.Time, bool) {
 	t, err := time.Parse(time.RFC3339Nano, raw)
 	if err != nil {
@@ -684,6 +716,8 @@ USAGE:
 
 FLAGS:
   --verbose         Show account, timestamps, snapshot path, and details
+  --plain           Print tab-separated rows for scripts
+  --no-headers      With --plain, suppress the header row
   --root <path>     Optional AGS data root (default: ~/.config/ags)
 
 OUTPUT:

@@ -219,6 +219,7 @@ func TestCLIValidationAndParseErrors(t *testing.T) {
 		{"list invalid tool", []string{"list", "bad"}, "invalid tool"},
 		{"list extra arg", []string{"list", "codex", "x"}, "usage: ags list"},
 		{"list parse error", []string{"list", "--bad-flag"}, "flag provided but not defined"},
+		{"list no headers without plain", []string{"list", "--no-headers"}, "--no-headers requires --plain"},
 	}
 
 	for _, tc := range cases {
@@ -463,6 +464,22 @@ func TestRunListErrorAndVerboseBranches(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "last refresh:") || !strings.Contains(out.String(), "detail:") {
 		t.Fatalf("expected verbose last refresh/detail branches, got %q", out.String())
+	}
+
+	out.Reset()
+	if err := runList([]string{"codex", "--plain", "--root", root}, &out); err != nil {
+		t.Fatalf("list plain: %v", err)
+	}
+	if !strings.Contains(out.String(), "tool\tlabel\tstatus\tneeds_refresh") {
+		t.Fatalf("expected plain header, got %q", out.String())
+	}
+
+	out.Reset()
+	if err := runList([]string{"codex", "--plain", "--no-headers", "--root", root}, &out); err != nil {
+		t.Fatalf("list plain no-headers: %v", err)
+	}
+	if strings.Contains(out.String(), "tool\tlabel\tstatus\tneeds_refresh") {
+		t.Fatalf("did not expect plain header with --no-headers, got %q", out.String())
 	}
 }
 
