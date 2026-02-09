@@ -11,14 +11,14 @@ It helps you:
 
 ## Quick start
 
-Install:
+Install (tap is required for this repo layout):
 
 ```bash
 brew tap nishantdesai/coding-agent-account-switcher https://github.com/nishantdesai/coding-agent-account-switcher
 brew install nishantdesai/coding-agent-account-switcher/ags
 ```
 
-Use:
+Use the tool:
 
 ```bash
 # save current auth into labeled snapshots
