@@ -81,14 +81,11 @@ go build -o ags ./cmd/ags
 
 ## Install (Homebrew)
 
-After the first tagged release is published:
+Use the formula in this repo directly (no separate tap repo required):
 
 ```bash
-brew tap nishantdesai/ags
-brew install ags
+brew install --HEAD https://raw.githubusercontent.com/nishantdesai/coding-agent-account-switcher/main/Formula/ags.rb
 ```
-
-Release publishing details are documented in `docs/RELEASING.md`.
 
 ## Release setup status
 
@@ -97,14 +94,13 @@ Implemented:
 - GitHub Actions CI (`.github/workflows/ci.yml`) for build, tests, race tests, and `go vet`.
 - GoReleaser config (`.goreleaser.yaml`) for multi-arch binaries, checksums, and version injection.
 - GitHub Actions release workflow (`.github/workflows/release.yml`) for tag-driven publishing.
-- Homebrew tap update via GoReleaser (`nishantdesai/homebrew-ags`).
+- Homebrew formula in-repo at `Formula/ags.rb` (install via raw URL).
 - OSS basics: `LICENSE`, `CONTRIBUTING.md`, `SECURITY.md`.
 
 Still required before first public release:
 
-1. Create the tap repository `nishantdesai/homebrew-ags`.
-2. Add repo secret `TAP_GITHUB_TOKEN` with write access to the tap repo.
-3. Push first version tag (for example `v0.1.0`) to trigger release automation.
+1. Push first version tag (for example `v0.1.0`) to trigger release automation.
+2. Optionally add a pinned-version formula flow later if you want non-HEAD Homebrew installs.
 
 ## Security notes
 
@@ -114,6 +110,4 @@ Still required before first public release:
 - `ags use` now performs rollback of target auth writes if metadata/state persistence fails.
 - For a future version, move secret payloads to macOS Keychain and keep only references in `state.json`.
 
-## Learning guide
-
-See `CONCEPTS.md` for concepts used in the implementation and what to study next.
+Release publishing details are documented in `docs/RELEASING.md`.

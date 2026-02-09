@@ -1,13 +1,6 @@
 # Releasing AGS
 
-This project ships release archives with GoReleaser and publishes a Homebrew formula in a separate tap.
-
-## One-time setup
-
-1. Create the tap repo: `nishantdesai/homebrew-ags`.
-2. In this repo, add secret `TAP_GITHUB_TOKEN`.
-- Use a GitHub fine-grained token with write access to `nishantdesai/homebrew-ags` contents.
-3. Ensure `LICENSE` exists (release archives include it).
+This project ships release archives with GoReleaser and keeps the Homebrew formula in this repo (`Formula/ags.rb`).
 
 ## Release flow
 
@@ -19,14 +12,14 @@ git push origin v0.1.0
 ```
 3. GitHub Actions `release` workflow will:
 - run tests,
-- publish release artifacts,
-- update Homebrew formula in `nishantdesai/homebrew-ags`.
+- publish release artifacts.
 
-## Install commands after release
+## Homebrew install (simple mode)
 
 ```bash
-brew tap nishantdesai/ags
-brew install ags
+brew install --HEAD https://raw.githubusercontent.com/nishantdesai/coding-agent-account-switcher/main/Formula/ags.rb
 ```
 
-If tap name changes, update `.goreleaser.yaml` and README install instructions.
+## Optional future improvement
+
+If you want pinned version installs (`brew install ags` without `--HEAD`), add a dedicated tap repo and automated formula updates later.

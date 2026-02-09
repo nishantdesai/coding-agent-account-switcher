@@ -41,27 +41,6 @@ archives:
 checksum:
   name_template: checksums.txt
 
-brews:
-  - name: ags
-    ids:
-      - default
-    homepage: https://github.com/nishantdesai/coding-agent-account-switcher
-    description: CLI for saving and switching codex and pi auth profiles
-    license: MIT
-    directory: Formula
-    repository:
-      owner: nishantdesai
-      name: homebrew-ags
-      token: "{{ .Env.TAP_GITHUB_TOKEN }}"
-    commit_author:
-      name: github-actions[bot]
-      email: [email protected]
-    commit_msg_template: "brew: update ags to {{ .Tag }}"
-    install: |
-      bin.install "ags"
-    test: |
-      assert_match "ags version", shell_output("#{bin}/ags version")
-
 changelog:
   sort: asc
   filters:
