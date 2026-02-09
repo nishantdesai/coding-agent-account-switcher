@@ -1,39 +1,90 @@
 # coding-agent-account-switcher
 
-`ags` is a Go CLI to save and switch auth profiles for coding-agent tools.
+`ags` is a Go CLI for managing multiple auth profiles across coding-agent tools.
 
-## V1 command model
+It helps you:
 
-- `ags save <tool> <label>` (also supports `--label` / `-l`)
-- `ags use <tool> <label>` (also supports `--label` / `-l`)
-- `ags delete <tool> <label>` (also supports `--label` / `-l`)
-- `ags list [tool] [--verbose]`
-- `ags active [tool] [--verbose]`
-- `ags version`
-- `ags help [command]`
+- save labeled snapshots (`work`, `personal`, etc.),
+- switch profiles explicitly,
+- inspect token/account health,
+- keep CLI usage simple and scriptable.
 
-Supported tools in v1:
+## Supported tools
+
+`ags` currently supports:
 
 - `codex`
 - `pi`
 
-Codex support is available in two places:
-- Tool mode: `ags save codex ...` / `ags use codex ...`
-- Pi provider mode: `ags save pi ... --provider codex` / `ags use pi ... --provider codex`
+Codex can be managed in two ways:
 
-## What each command does
+- direct tool mode: `ags save codex ...` / `ags use codex ...`
+- pi provider mode: `ags save pi ... --provider codex` / `ags use pi ... --provider codex`
 
-- `save`: copies the current tool auth file into AGS-managed storage under a label.
-  - For `pi`, you can optionally save only one provider with `--provider` (for example `codex` or `anthropic`).
-- `use`: writes the saved labeled snapshot back into that tool's runtime auth file.
-  - For `pi`, AGS now merges provider keys from the saved snapshot into the existing runtime file, so unrelated providers are preserved.
-  - For `pi`, you can optionally apply only one provider from a saved snapshot with `--provider`.
-- `delete`: removes a saved labeled snapshot and its state metadata for that tool.
-- `list`: shows saved labels grouped by tool with compact human-readable status lines.
-  - Use `--verbose` for account/timestamp/snapshot/detail lines.
-  - Use `--plain` for script-friendly tab-separated rows (`--no-headers` optional).
-- `active`: shows which saved label currently matches each tool runtime auth file.
-- `version`: prints CLI version.
+## Install
+
+Homebrew (single-repo formula):
+
+```bash
+brew install --HEAD https://raw.githubusercontent.com/nishantdesai/coding-agent-account-switcher/main/Formula/ags.rb
+```
+
+Build from source:
+
+```bash
+go build -o ags ./cmd/ags
+```
+
+## Quick start
+
+```bash
+# save current auth into labeled snapshots
+ags save codex work
+ags save pi personal
+
+# switch to a saved snapshot
+ags use codex work
+ags use pi personal
+
+# inspect saved profiles and active runtime match
+ags list
+ags active
+```
+
+## Command reference
+
+| Command | Purpose |
+| --- | --- |
+| `ags save <tool> <label>` | Save current runtime auth into a labeled snapshot |
+| `ags use <tool> <label>` | Apply a saved snapshot to runtime auth |
+| `ags delete <tool> <label>` | Remove a labeled snapshot and metadata |
+| `ags list [tool] [--verbose]` | List saved profiles and token/account status |
+| `ags active [tool] [--verbose]` | Show which label currently matches runtime auth |
+| `ags version` | Print CLI version |
+| `ags help [command]` | Show detailed help |
+
+Label flags are also supported on `save`, `use`, and `delete`:
+
+- `--label <name>`
+- `-l <name>`
+
+Labels must match: `[a-zA-Z0-9._-]+`
+
+## Pi provider mode
+
+For `pi`, you can save or apply only one provider from the auth file.
+
+Examples:
+
+```bash
+ags save pi codex-work --source /path/to/pi-auth.json --provider codex
+ags save pi anthropic-work --source /path/to/pi-auth.json --provider anthropic
+
+ags use pi codex-work --provider codex
+ags use pi anthropic-work --provider anthropic
+```
+
+`ags use pi ...` merges provider keys from the snapshot into the existing runtime file, so unrelated providers are preserved.
 
 ## Refresh signal behavior
 
@@ -45,47 +96,31 @@ Codex support is available in two places:
 
 This is based on snapshot hash differences between uses.
 
-## Default runtime auth paths
+## Paths and storage
 
-- `codex`: `~/.codex/auth.json`
-- `pi`: `~/.pi/agent/auth.json`
+Default runtime auth paths:
 
-You can override paths:
+- codex: `~/.codex/auth.json`
+- pi: `~/.pi/agent/auth.json`
+
+Path overrides:
+
 - `ags save codex work --source /path/to/auth.json`
 - `ags use codex work --target /path/to/auth.json`
 - `ags save pi work --source /path/to/auth.json`
 - `ags use pi work --target /path/to/auth.json`
 
-Pi provider-scoped examples:
-- `ags save pi codex-work --source /path/to/pi-auth.json --provider codex`
-- `ags save pi anthropic-work --source /path/to/pi-auth.json --provider anthropic`
-- `ags use pi codex-work --provider codex`
-- `ags use pi anthropic-work --provider anthropic`
-
-Script-friendly list output (inspired by tools like `jira-cli`):
-- `ags list --plain`
-- `ags list codex --plain --no-headers`
-
-## Data storage
+Data storage root:
 
 AGS stores data under `~/.config/ags`:
 
 - `state.json` metadata
 - `snapshots/<tool>/<label>.json` auth snapshots
 
-## Build
+Script-friendly list output:
 
-```bash
-go build -o ags ./cmd/ags
-```
-
-## Install (Homebrew)
-
-Use the formula in this repo directly (no separate tap repo required):
-
-```bash
-brew install --HEAD https://raw.githubusercontent.com/nishantdesai/coding-agent-account-switcher/main/Formula/ags.rb
-```
+- `ags list --plain`
+- `ags list codex --plain --no-headers`
 
 ## Release setup status
 
@@ -102,7 +137,7 @@ Still required before first public release:
 1. Push first version tag (for example `v0.1.0`) to trigger release automation.
 2. Optionally add a pinned-version formula flow later if you want non-HEAD Homebrew installs.
 
-## Security notes
+## Security
 
 - Snapshot and state files are written with `0600`.
 - This repo stores real auth snapshots on disk; keep your machine and backups encrypted.
