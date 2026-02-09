@@ -1241,3 +1241,94 @@ func TestManagerActivePiSnapshotScanBranches(t *testing.T) {
 		t.Fatalf("unexpected active result: %+v", items)
 	}
 }
+
+func TestManagerRejectsInvalidToolAndLabel(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	m, err := NewManager(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+
+	invalidTool := Tool("claude")
+	if _, err := m.Save(invalidTool, "work", ""); err == nil || !strings.Contains(err.Error(), "invalid tool") {
+		t.Fatalf("expected invalid tool error from Save, got %v", err)
+	}
+	if _, err := m.Use(invalidTool, "work", filepath.Join(t.TempDir(), "target.json")); err == nil || !strings.Contains(err.Error(), "invalid tool") {
+		t.Fatalf("expected invalid tool error from Use, got %v", err)
+	}
+	if _, err := m.Delete(invalidTool, "work"); err == nil || !strings.Contains(err.Error(), "invalid tool") {
+		t.Fatalf("expected invalid tool error from Delete, got %v", err)
+	}
+
+	invalidFilter := Tool("not-a-tool")
+	if _, err := m.List(&invalidFilter); err == nil || !strings.Contains(err.Error(), "invalid tool") {
+		t.Fatalf("expected invalid tool error from List, got %v", err)
+	}
+	if _, err := m.Active(&invalidFilter); err == nil || !strings.Contains(err.Error(), "invalid tool") {
+		t.Fatalf("expected invalid tool error from Active, got %v", err)
+	}
+
+	if _, err := m.Save(ToolCodex, "bad label", ""); err == nil || !strings.Contains(err.Error(), "label must match") {
+		t.Fatalf("expected invalid label format error from Save, got %v", err)
+	}
+	if _, err := m.Use(ToolCodex, " ", filepath.Join(t.TempDir(), "target.json")); err == nil || !strings.Contains(err.Error(), "label is required") {
+		t.Fatalf("expected required label error from Use, got %v", err)
+	}
+	if _, err := m.Delete(ToolCodex, "../traversal"); err == nil || !strings.Contains(err.Error(), "label must match") {
+		t.Fatalf("expected invalid label format error from Delete, got %v", err)
+	}
+}
+
+func TestManagerUseRollsBackTargetWhenStateSaveFails(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	root := t.TempDir()
+	m, err := NewManager(root)
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+
+	source := filepath.Join(t.TempDir(), "source.json")
+	writeFile(t, source, makeCodexAuthJSON(t, time.Now().Add(2*time.Hour)))
+	if _, err := m.Save(ToolCodex, "work", source); err != nil {
+		t.Fatalf("save setup: %v", err)
+	}
+
+	t.Run("restores previous file content", func(t *testing.T) {
+		restore := restoreManagerSeams()
+		defer restore()
+		jsonMarshalIndent = func(any, string, string) ([]byte, error) { return nil, os.ErrInvalid }
+
+		target := filepath.Join(t.TempDir(), "target.json")
+		originalRaw := []byte(`{"tokens":{"access_token":"old"}}`)
+		writeFile(t, target, originalRaw)
+
+		if _, err := m.Use(ToolCodex, "work", target); err == nil || !strings.Contains(err.Error(), "target rolled back") {
+			t.Fatalf("expected use saveState rollback error, got %v", err)
+		}
+
+		got, err := os.ReadFile(target)
+		if err != nil {
+			t.Fatalf("read rolled back target: %v", err)
+		}
+		if string(got) != string(originalRaw) {
+			t.Fatalf("expected target rollback to original content, got %q", string(got))
+		}
+	})
+
+	t.Run("removes newly created file", func(t *testing.T) {
+		restore := restoreManagerSeams()
+		defer restore()
+		jsonMarshalIndent = func(any, string, string) ([]byte, error) { return nil, os.ErrInvalid }
+
+		target := filepath.Join(t.TempDir(), "new-target.json")
+		if _, err := m.Use(ToolCodex, "work", target); err == nil || !strings.Contains(err.Error(), "target rolled back") {
+			t.Fatalf("expected use saveState rollback error, got %v", err)
+		}
+
+		if _, err := os.Stat(target); !os.IsNotExist(err) {
+			t.Fatalf("expected new target file to be removed after rollback, got err=%v", err)
+		}
+	})
+}

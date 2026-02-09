@@ -59,6 +59,10 @@ func (m *Manager) SaveWithPIProvider(tool Tool, label string, sourceOverride str
 }
 
 func (m *Manager) save(tool Tool, label string, sourceOverride string, piProvider string) (*SaveResult, error) {
+	if err := validateManagerToolAndLabel(tool, label); err != nil {
+		return nil, err
+	}
+
 	sourcePath, err := m.resolveSourcePath(tool, sourceOverride)
 	if err != nil {
 		return nil, err
@@ -130,6 +134,10 @@ func (m *Manager) UseWithPIProvider(tool Tool, label string, targetOverride stri
 }
 
 func (m *Manager) use(tool Tool, label string, targetOverride string, piProvider string) (*UseResult, error) {
+	if err := validateManagerToolAndLabel(tool, label); err != nil {
+		return nil, err
+	}
+
 	state, err := m.loadState()
 	if err != nil {
 		return nil, err
@@ -164,6 +172,10 @@ func (m *Manager) use(tool Tool, label string, targetOverride string, piProvider
 	if err != nil {
 		return nil, err
 	}
+	previousTargetRaw, hadPreviousTarget, err := readOptionalFile(target)
+	if err != nil {
+		return nil, fmt.Errorf("reading existing target auth file: %w", err)
+	}
 
 	rawToWrite := snapshotToApply
 	if tool == ToolPi {
@@ -195,7 +207,11 @@ func (m *Manager) use(tool Tool, label string, targetOverride string, piProvider
 	entry.LastUsedSHA = hash
 	state.Entries[key] = entry
 	if err := m.saveState(state); err != nil {
-		return nil, err
+		rollbackErr := rollbackUseTargetWrite(target, previousTargetRaw, hadPreviousTarget)
+		if rollbackErr != nil {
+			return nil, fmt.Errorf("saving state after writing target: %w (rollback failed: %v)", err, rollbackErr)
+		}
+		return nil, fmt.Errorf("saving state after writing target: %w (target rolled back)", err)
 	}
 
 	return &UseResult{
@@ -307,6 +323,10 @@ func mergePIAuthWithTarget(snapshotRaw []byte, targetPath string) ([]byte, error
 }
 
 func (m *Manager) Delete(tool Tool, label string) (*DeleteResult, error) {
+	if err := validateManagerToolAndLabel(tool, label); err != nil {
+		return nil, err
+	}
+
 	state, err := m.loadState()
 	if err != nil {
 		return nil, err
@@ -341,6 +361,12 @@ func (m *Manager) Delete(tool Tool, label string) (*DeleteResult, error) {
 }
 
 func (m *Manager) List(toolFilter *Tool) ([]ListItem, error) {
+	if toolFilter != nil {
+		if err := validateManagerTool(*toolFilter); err != nil {
+			return nil, err
+		}
+	}
+
 	state, err := m.loadState()
 	if err != nil {
 		return nil, err
@@ -387,6 +413,12 @@ func (m *Manager) List(toolFilter *Tool) ([]ListItem, error) {
 }
 
 func (m *Manager) Active(toolFilter *Tool) ([]ActiveItem, error) {
+	if toolFilter != nil {
+		if err := validateManagerTool(*toolFilter); err != nil {
+			return nil, err
+		}
+	}
+
 	state, err := m.loadState()
 	if err != nil {
 		return nil, err
@@ -564,6 +596,55 @@ func rememberIdentity(state *State, insight AuthInsight) {
 		Plan:      plan,
 		UpdatedAt: nowISO(),
 	}
+}
+
+func validateManagerToolAndLabel(tool Tool, label string) error {
+	if err := validateManagerTool(tool); err != nil {
+		return err
+	}
+	return validateManagerLabel(label)
+}
+
+func validateManagerTool(tool Tool) error {
+	if _, ok := ParseTool(tool.String()); !ok {
+		return fmt.Errorf("invalid tool %q. expected one of: codex, pi", tool)
+	}
+	return nil
+}
+
+func validateManagerLabel(label string) error {
+	label = strings.TrimSpace(label)
+	if label == "" {
+		return errors.New("label is required")
+	}
+	if !labelPattern.MatchString(label) {
+		return errors.New("label must match [a-zA-Z0-9._-]+")
+	}
+	return nil
+}
+
+func readOptionalFile(path string) ([]byte, bool, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, false, nil
+		}
+		return nil, false, err
+	}
+	return raw, true, nil
+}
+
+func rollbackUseTargetWrite(target string, previousRaw []byte, hadPrevious bool) error {
+	if hadPrevious {
+		if err := atomicWriteFile(target, previousRaw, 0o600); err != nil {
+			return fmt.Errorf("restoring previous target content: %w", err)
+		}
+		return nil
+	}
+	if err := os.Remove(target); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("removing new target file: %w", err)
+	}
+	return nil
 }
 
 func (m *Manager) resolveSourcePath(tool Tool, sourceOverride string) (string, error) {
