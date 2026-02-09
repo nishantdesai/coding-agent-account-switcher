@@ -17,6 +17,10 @@ Supported tools in v1:
 - `codex`
 - `pi`
 
+Codex support is available in two places:
+- Tool mode: `ags save codex ...` / `ags use codex ...`
+- Pi provider mode: `ags save pi ... --provider codex` / `ags use pi ... --provider codex`
+
 ## What each command does
 
 - `save`: copies the current tool auth file into AGS-managed storage under a label.
