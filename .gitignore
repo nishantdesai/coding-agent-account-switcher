@@ -29,3 +29,5 @@ ags-data/
 snapshots/
 state.json
 
+# Local-only notes
+CONCEPTS.md
