@@ -87,16 +87,6 @@ ags use pi anthropic-work --provider anthropic
 
 `ags use pi ...` merges provider keys from the snapshot into the existing runtime file, so unrelated providers are preserved.
 
-## Refresh signal behavior
-
-`ags use ...` prints whether the saved snapshot is:
-
-- `first use`
-- `unchanged since last use`
-- `changed since last use (likely refreshed)`
-
-This is based on snapshot hash differences between uses.
-
 ## Paths and storage
 
 Default runtime auth paths:
